@@ -7,14 +7,18 @@ guidelines outlined in Halverson et al. (2017).
 
 This code is based on the RBR CTD processing script found here: https://github.com/IOS-OSD-DPG/RBR-CTD-Processing/tree/main
 """
+import copy
 import sys
+import os
+
 import pyrsktools
 import pandas as pd
-from tkinter import Tk, filedialog
-
+from matplotlib import pyplot as plt
 from openpyxl.styles import Alignment
 
-# GLOBAL VARIABLES -- DONT CHANGE
+# GLOBAL VARIABLES
+CHANNELS = ["chlorophyll_a", "par"]
+CHANNEL_UNTIS = ["µg/l", "µMol/m²/s"]
 processing_record = {}
 original_raw_downcast_data = []
 
@@ -26,7 +30,6 @@ rsk_file_name = "Eureka2024_PAR_Fluo_St1.rsk"
 def read_rsk():
     print("Reading RSK file...")
     file_name = str(dest_dir + "\\" + rsk_file_name)
-    print(file_name)
     rsk = pyrsktools.RSK(file_name, readHiddenChannels=False)
     rsk.open()
     rsk.readdata()
@@ -70,12 +73,14 @@ def create_metadata_file(rsk):
     print("Creating metadata file...")
 
 def derive_values(rsk):
-    #derive salinity (?), sea pressure, depth, and velocity (?)
+    print("Deriving sea pressure, depth, and velocity...")
+    rsk.deriveseapressure()
+    rsk.derivedepth()
+    rsk.derivevelocity()
     return rsk
-    print("Deriving values...")
+
 
 def get_downcast_and_upcast(rsk):
-
     ## or use this: upcast = rsk.casts(pyrsktools.Region.CAST_UP)
     # determine which records are upcast, which are downcast
     try:
@@ -88,8 +93,36 @@ def get_downcast_and_upcast(rsk):
 
     print("Getting downcast and upcast...")
 
-def pre_processing_plots():
-    print("Pre-processing plots...")
+
+def plot_channels(rsk, stage, figure_dir):
+    ##plot each channel vs pressure
+    print("Plotting channels...")
+
+
+def plot_pressure_diff(rsk_df, stage, figure_dir):
+    ##plot pressure for all scans in rsk data
+    print("Plotting pressure...")
+
+    if stage == "pre":
+        figure_name = "pressure_differences.png"
+        title = "Pressure Difference Between Consecutive Scans"
+    elif stage == "post":
+        figure_name = "pressure_differences_with_corrections.png"
+        title = "Pressure Difference Between Consecutive Scans (with ZOH corrections made)"
+
+    pressure_diff = rsk_df["pressure"].diff()
+
+    figure = plt.figure(figsize = (14, 6), dpi = 600)
+
+    plt.plot(pressure_diff, color = "blue", linewidth = 0.5, label = "Pressure Diff")
+    plt.ylabel("Pressure (decibar)")
+    plt.xlabel("Scans")
+    plt.grid()
+    plt.legend()
+    plt.title(title)
+    plt.tight_layout()
+    plt.savefig(os.path.join(figure_dir + "\\" + figure_name))
+
 
 def check_for_zoh():
     # this function calls each individual step in the processing pipeline, serves as main controller
@@ -105,10 +138,18 @@ def correct_spikes_and_zoh():
 
 
 def process_rsk():
-    original_rsk = read_rsk()
-    create_metadata_file(original_rsk)
-    pre_processing_plots()
-    derived_rsk = derive_values(original_rsk)
+    raw_rsk = read_rsk() # keep a copy of the untouched raw data
+    raw_rsk_df = pd.DataFrame(raw_rsk.data)
+    print(raw_rsk_df)
+    rsk = read_rsk() # copy of the rsk object that will be processed
+    create_metadata_file(rsk)
+
+    figure_dir = os.path.join(dest_dir, "figures")
+    if not os.path.exists(figure_dir): os.makedirs(figure_dir)
+    plot_channels(raw_rsk_df, "pre", figure_dir)
+    plot_pressure_diff(raw_rsk_df, "pre", figure_dir)
+
+    derived_rsk = derive_values(rsk)
     check_for_zoh()
     prompt_user_for_spk_zoh()
     correct_spikes_and_zoh()
