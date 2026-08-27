@@ -11,6 +11,7 @@ import copy
 import sys
 import os
 
+import numpy as np
 import pyrsktools
 import pandas as pd
 from matplotlib import pyplot as plt
@@ -18,9 +19,11 @@ from openpyxl.styles import Alignment
 
 # GLOBAL VARIABLES
 CHANNELS = ["chlorophyll_a", "par"]
-CHANNEL_UNTIS = ["µg/l", "µMol/m²/s"]
+CHANNEL_UNTIS = {"chlorophyll_a" : "µg/l", "par":"µMol/m²/s"}
 processing_record = {}
 original_raw_downcast_data = []
+sampling_period = np.nan
+fill_type = 'interpolated value'
 
 
 # USER-DEFINED VARIABLES -- FILL THESE IN BEFORE RUNNING!
@@ -52,6 +55,7 @@ def create_metadata_file(rsk):
     metadata_dict["RSK File Name"] = rsk_file_name
     metadata_dict["Channels"] = rsk.channels
     metadata_dict["Number of Channels"] = len(rsk.channels)
+    metadata_dict["Sampling Interval"] = str(rsk.scheduleInfo.samplingperiod()) + " seconds"
     metadata_dict["Deployment"] = rsk.deployment
 
     metadata_df = pd.DataFrame(list(metadata_dict.items()),columns=["Key", "Value"])
@@ -72,11 +76,20 @@ def create_metadata_file(rsk):
         worksheet.column_dimensions["B"].width = 100
     print("Creating metadata file...")
 
+def get_sampling_period(rsk):
+    interval = rsk.scheduleInfo.samplingperiod()
+    global sampling_period
+
+    if interval <= 0 and sampling_period is np.nan:
+        sys.exit("Sampling period not detected correctly in metadata. Fill out sampling period manually on line 25.")
+    else:
+        sampling_period = interval
+
+
 def derive_values(rsk):
     print("Deriving sea pressure, depth, and velocity...")
     rsk.deriveseapressure()
     rsk.derivedepth()
-    rsk.derivevelocity()
     return rsk
 
 
@@ -94,9 +107,28 @@ def get_downcast_and_upcast(rsk):
     print("Getting downcast and upcast...")
 
 
-def plot_channels(rsk, stage, figure_dir):
+def plot_channels(rsk_df, stage, figure_dir):
     ##plot each channel vs pressure
     print("Plotting channels...")
+    if stage == "pre":
+        figure_name = "pre_processing_"
+        title = "Pre-Processing "
+    elif stage == "post":
+        figure_name = "post_processing_"
+        title = "Post-Processing "
+    for channel in CHANNELS:
+        figure, ax = plt.subplots()
+        ax.plot(rsk_df[channel], rsk_df["pressure"])
+        ax.invert_yaxis()
+        ax.xaxis.set_label_position("top")
+        ax.xaxis.set_ticks_position("top")
+        ax.tick_params(bottom=True, top=True, left=True, right=True, labelbottom=True, labeltop=True, labelleft=True, labelright=True)
+        plt.ylabel("Pressure (decibar)")
+        plt.xlabel(channel.capitalize() + " (" + CHANNEL_UNTIS[channel] + ")")
+        plt.title(title + channel.replace("_", " ").capitalize() + " vs. Pressure")
+        plt.tight_layout()
+        plt.savefig(figure_dir + "\\"+ figure_name + channel)
+
 
 
 def plot_pressure_diff(rsk_df, stage, figure_dir):
@@ -124,24 +156,56 @@ def plot_pressure_diff(rsk_df, stage, figure_dir):
     plt.savefig(os.path.join(figure_dir + "\\" + figure_name))
 
 
-def check_for_zoh():
+def check_for_zoh(rsk_df):
     # this function calls each individual step in the processing pipeline, serves as main controller
     print("Checking for zoh...")
+    pressure = pd.to_numeric(rsk_df["pressure"], errors="coerce").dropna()
+    pressure_diffs = np.diff(pressure)
+
+    print("\n--------------------------------------------------------------")
+    print("checking for zero order holds. Use the following values to help decide if corrections are needed or not:")
+    print("Total number of pressure records:", len(pressure))
+    print(
+        "Sum of zero pressure differences "
+        "(number of neighboring samples with identical pressure values):",
+        sum(pressure_diffs == 0)
+    )
+    print("\n")
+    sec2min = 1 / 60
+
+    if sum(pressure_diffs == 0) >= np.floor(
+            len(pressure) * sampling_period * sec2min
+    ):
+        zoh_correction_needed = True
+        print("based on these values, it is likely ZOH corrections are needed.")
+    else:
+        zoh_correction_needed = False
+        print("based on these values, it is unlikely ZOH corrections are needed.")
+
+    print("--------------------------------------------------------------")
+
 
 def prompt_user_for_spk_zoh():
     #ask the user if they want to despike the data, and ask if they want to correct for
     #zero order holds
     print("Prompting user for despiking and zoh correction...")
+    ## i think separate prompts for spk and zoh this time, maybe depending on if we want to despike BOTH par and fluo!!
 
-def correct_spikes_and_zoh():
+def correct_spikes_and_zoh(rsk_df):
     print("Correcting spikes and zoh...")
+    check_for_zoh(rsk_df)
+    prompt_user_for_spk_zoh()
+
 
 
 def process_rsk():
     raw_rsk = read_rsk() # keep a copy of the untouched raw data
-    raw_rsk_df = pd.DataFrame(raw_rsk.data)
-    print(raw_rsk_df)
+    raw_rsk_df = pd.DataFrame(raw_rsk.data) # convert it into dataframe format
+
     rsk = read_rsk() # copy of the rsk object that will be processed
+    rsk_df = pd.DataFrame(rsk.data) # convert into dataframe format
+
+    get_sampling_period(rsk)
     create_metadata_file(rsk)
 
     figure_dir = os.path.join(dest_dir, "figures")
@@ -150,9 +214,7 @@ def process_rsk():
     plot_pressure_diff(raw_rsk_df, "pre", figure_dir)
 
     derived_rsk = derive_values(rsk)
-    check_for_zoh()
-    prompt_user_for_spk_zoh()
-    correct_spikes_and_zoh()
+    correct_spikes_and_zoh(rsk_df)
 
 
 
