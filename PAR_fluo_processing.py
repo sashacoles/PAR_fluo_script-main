@@ -14,8 +14,10 @@ import os
 import numpy as np
 import pyrsktools
 import pandas as pd
+from copy import deepcopy
 from matplotlib import pyplot as plt
 from openpyxl.styles import Alignment
+from pyrsktools._rsk.export import RSK2CSV
 
 # GLOBAL VARIABLES
 CHANNELS = ["chlorophyll_a", "par"]
@@ -23,12 +25,19 @@ CHANNEL_UNTIS = {"chlorophyll_a" : "µg/l", "par":"µMol/m²/s"}
 processing_record = {}
 original_raw_downcast_data = []
 sampling_period = np.nan
-fill_type = 'interpolated value'
+
 
 
 # USER-DEFINED VARIABLES -- FILL THESE IN BEFORE RUNNING!
 dest_dir = "C:\\Users\\COLESS\\Documents\\Python_CTDscript\\PAR_fluo_script-main\\station1"
 rsk_file_name = "Eureka2024_PAR_Fluo_St1.rsk"
+fill_action = 'interp' ## how we want to correct for zero order holds and despike--can either be 'interp' or na
+## despiking variables:
+spk_std = 3
+spk_window = 11
+## clipping variables:
+limit_pressure_change_down = 0.02
+limit_pressure_change_up = -0.03
 
 def read_rsk():
     print("Reading RSK file...")
@@ -94,17 +103,23 @@ def derive_values(rsk):
 
 
 def get_downcast_and_upcast(rsk):
-    ## or use this: upcast = rsk.casts(pyrsktools.Region.CAST_UP)
-    # determine which records are upcast, which are downcast
+    # determine which records are upcast, which are downcast, return rsk objects
     try:
-        downcast_indices = rsk.getprofilesindices(direction="down")
+        downcast_indices = rsk.gsetprofilesindices(direction="down")
         upcast_indices = rsk.getprofilesindices(direction="up")
     except AttributeError:
         rsk.computeprofiles()  # This should fix the problem
         downcast_indices = rsk.getprofilesindices(direction="down")
         upcast_indices = rsk.getprofilesindices(direction="up")
 
-    print("Getting downcast and upcast...")
+    if len(downcast_indices) == 0:
+        raise ValueError("No downcast found.")
+
+    if len(upcast_indices) == 0:
+        raise ValueError("No upcast found.")
+
+    return downcast_indices[0], upcast_indices[0]
+
 
 
 def plot_channels(rsk_df, stage, figure_dir):
@@ -116,6 +131,10 @@ def plot_channels(rsk_df, stage, figure_dir):
     elif stage == "post":
         figure_name = "post_processing_"
         title = "Post-Processing "
+    else:
+        figure_name = stage + " "
+        title = stage.replace("_", " ").capitalize() + " "
+
     for channel in CHANNELS:
         figure, ax = plt.subplots()
         ax.plot(rsk_df[channel], rsk_df["pressure"])
@@ -155,10 +174,95 @@ def plot_pressure_diff(rsk_df, stage, figure_dir):
     plt.tight_layout()
     plt.savefig(os.path.join(figure_dir + "\\" + figure_name))
 
+def trim_profile(rsk):
+    rsk = remove_soak(rsk)
+    downcast_indices, upcast_indices = get_downcast_and_upcast(rsk)
+    down_start, down_end = clip_cast(rsk, 'down', downcast_indices, limit_pressure_change_down)
+    up_start, up_end = clip_cast(rsk, 'up', upcast_indices, limit_pressure_change_up)
+    downcast_indices = downcast_indices[down_start:down_end]
+    upcast_indices = upcast_indices[up_start:up_end]
+    keep_indices = np.sort(np.concatenate([downcast_indices, upcast_indices]))
+    rsk.data = rsk.data[keep_indices].copy()
 
-def check_for_zoh(rsk_df):
-    # this function calls each individual step in the processing pipeline, serves as main controller
+    rsk_to_csv(rsk)
+    return rsk
+
+def remove_soak(rsk):
+    print("- Removing soak from beginning of downcast")
+    window = 100
+    run = 100  ## instrument must be actively dropping/rising for at least 100 samples in a row
+
+    pressure = pd.Series(rsk.data["pressure"])
+
+    # soak detection
+    rolling_std = pressure.rolling(window).std()
+    threshold = rolling_std.quantile(0.10)
+    moving = rolling_std > threshold  # moving = true means the instrument is actively dropping/rising, false means its soaking
+
+    start = None
+
+    for i in range(len(moving) - run):  # check samples 1-49, 1-50, 2-51, etc
+        if moving.iloc[i:i + run].all():  ## do all samples within the window have the value moving = true?
+            start = i
+            break
+    if start is None:
+        print("No samples trimmed from downcast--no soak period detected.\n")
+        start = 0
+
+    rsk.data = rsk.data[start:]
+
+    return rsk
+
+def clip_cast(rsk, cast_direction, indices, limit_pressure_change):
+    pressure = pd.Series(rsk.data["pressure"][indices])
+    diff = pressure.diff()
+
+    index_start = pressure.index[0]
+    if cast_direction == "down":
+        limit_drop = limit_pressure_change
+        diff_mask = diff > limit_drop
+    elif cast_direction == "up":
+        limit_rise = limit_pressure_change
+        diff_mask = diff < limit_rise
+    else:
+        sys.exit(f"cast_direction {cast_direction} is invalid. Ending program")
+    diff_rise = diff.loc[diff_mask]
+    for j in range(len(diff.loc[diff_mask])):
+        index_1 = diff_rise.index[j]
+        if (
+                (diff_rise.index[j + 1] == index_1 + 1)
+                and (diff_rise.index[j + 2] == index_1 + 2)
+                and (diff_rise.index[j + 3] == index_1 + 3)
+                and (diff_rise.index[j + 4] == index_1 + 4)
+                and (diff_rise.index[j + 5] == index_1 + 5)
+                and (diff_rise.index[j + 6] == index_1 + 6)
+                and (diff_rise.index[j + 7] == index_1 + 7)
+                and (diff_rise.index[j + 8] == index_1 + 8)
+        ):
+            index_end_1 = index_1 - 1
+            break
+    cut_start = index_end_1 - index_start
+
+    for j in range(-1, -len(diff.loc[diff_mask]), -1):
+        index_2 = diff_rise.index[j]
+        if (
+                (diff_rise.index[j - 1] == index_2 - 1)
+                and (diff_rise.index[j - 2] == index_2 - 2)
+                and (diff_rise.index[j - 3] == index_2 - 3)
+                and (diff_rise.index[j - 4] == index_2 - 4)
+                and (diff_rise.index[j - 5] == index_2 - 5)
+        ):
+            index_end_2 = index_2 + 1
+            break
+    cut_end = index_end_2 - index_start
+
+    return cut_start, cut_end
+
+## this might be misleading since it only talks about pressure
+## but other channels have holds that should be fixed/interpolated, not just pressure
+def check_for_zoh(rsk):
     print("Checking for zoh...")
+    rsk_df = pd.DataFrame(rsk.data)
     pressure = pd.to_numeric(rsk_df["pressure"], errors="coerce").dropna()
     pressure_diffs = np.diff(pressure)
 
@@ -185,25 +289,79 @@ def check_for_zoh(rsk_df):
     print("--------------------------------------------------------------")
 
 
-def prompt_user_for_spk_zoh():
-    #ask the user if they want to despike the data, and ask if they want to correct for
-    #zero order holds
-    print("Prompting user for despiking and zoh correction...")
+def prompt_user_for_despiking(channel):
+    #ask the user if they want to despike chlorophyll a and/or par
+    valid_input = False
+    while not valid_input:
+        user_input = input(f'Is despiking needed for {channel}? Enter either true or false:').lower().strip()
+        if user_input == 'true':
+            user_input = True
+            valid_input = True
+            print(f"{channel} will be despiked.")
+        elif user_input == 'false':
+            user_input = False
+            valid_input = True
+        else:
+            print('Invalid input. You must enter either true or false.')
+    return user_input
+
     ## i think separate prompts for spk and zoh this time, maybe depending on if we want to despike BOTH par and fluo!!
+def prompt_user_for_zoh():
+    valid_input = False
+    while not valid_input:
+        user_input = input('Is zero order hold correction needed? Enter either true or false:').lower().strip()
+        if user_input =='true':
+            user_input = True
+            valid_input = True
+            print("zero order holds will be corrected.")
+        elif user_input == 'false':
+            user_input = False
+            valid_input = True
+            print("zero order holds will not be corrected.")
+        else:
+            print('Invalid input. You must enter either true or false.')
+    return user_input
 
-def correct_spikes_and_zoh(rsk_df):
+
+def correct_spikes_and_zoh(rsk):
     print("Correcting spikes and zoh...")
-    check_for_zoh(rsk_df)
-    prompt_user_for_spk_zoh()
+    check_for_zoh(rsk)
+    chl = rsk.data['chlorophyll_a']
 
+    print("\nBEFORE correcthold")
+    print("samples:", len(chl))
+    print("NaNs:", np.sum(np.isnan(chl)))
+    print("finite:", np.sum(np.isfinite(chl)))
+    print("min:", np.nanmin(chl))
+    print("max:", np.nanmax(chl))
+
+    if prompt_user_for_zoh():
+        rsk.correcthold(action = fill_action)
+        chl = rsk.data['chlorophyll_a']
+
+        print("\nAFTER correcthold")
+        print("samples:", len(chl))
+        print("NaNs:", np.sum(np.isnan(chl)))
+        print("finite:", np.sum(np.isfinite(chl)))
+        print("min:", np.nanmin(chl))
+        print("max:", np.nanmax(chl))
+    if prompt_user_for_despiking('chlorophyll a'):
+        rsk.despike(channels='chlorophyll_a', threshold=spk_std, windowLength=spk_window, action=fill_action)
+    if prompt_user_for_despiking('par'):
+        rsk.despike(channels='par', threshold=spk_std, windowLength=spk_window, action=fill_action)
+    plot_channels(pd.DataFrame(rsk.data), "post_despiking", os.path.join(dest_dir, "figures"))
+    return rsk
+
+
+def rsk_to_csv(rsk):
+    RSK2CSV(rsk, outputDir=dest_dir)
 
 
 def process_rsk():
-    raw_rsk = read_rsk() # keep a copy of the untouched raw data
+    raw_rsk = read_rsk() # copy of the untouched raw data
     raw_rsk_df = pd.DataFrame(raw_rsk.data) # convert it into dataframe format
 
     rsk = read_rsk() # copy of the rsk object that will be processed
-    rsk_df = pd.DataFrame(rsk.data) # convert into dataframe format
 
     get_sampling_period(rsk)
     create_metadata_file(rsk)
@@ -213,8 +371,10 @@ def process_rsk():
     plot_channels(raw_rsk_df, "pre", figure_dir)
     plot_pressure_diff(raw_rsk_df, "pre", figure_dir)
 
-    derived_rsk = derive_values(rsk)
-    correct_spikes_and_zoh(rsk_df)
+    rsk = derive_values(rsk)
+    rsk = trim_profile(rsk)
+    rsk = correct_spikes_and_zoh(rsk)
+
 
 
 
