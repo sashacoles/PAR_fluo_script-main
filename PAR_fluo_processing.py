@@ -8,6 +8,7 @@ guidelines outlined in Halverson et al. (2017).
 This code is based on the RBR CTD processing script found here: https://github.com/IOS-OSD-DPG/RBR-CTD-Processing/tree/main
 """
 import copy
+import shutil
 import sys
 import os
 
@@ -29,8 +30,8 @@ sampling_period = np.nan
 
 
 # USER-DEFINED VARIABLES -- FILL THESE IN BEFORE RUNNING!
-dest_dir = "C:\\Users\\COLESS\\Documents\\Python_CTDscript\\PAR_fluo_script-main\\station1"
-rsk_file_name = "Eureka2024_PAR_Fluo_St1.rsk"
+dest_dir = "C:\\Users\\COLESS\\Documents\\Python_CTDscript\\PAR_fluo_script-main\\station2"
+rsk_file_name = "Eureka2024_PAR_Fluo_St2.rsk"
 fill_action = 'interp' ## how we want to correct for zero order holds and despike--can either be 'interp' or na
 ## despiking variables:
 spk_std = 3
@@ -121,7 +122,6 @@ def get_downcast_and_upcast(rsk):
     return downcast_indices[0], upcast_indices[0]
 
 
-
 def plot_channels(rsk_df, stage, figure_dir):
     ##plot each channel vs pressure
     print("Plotting channels...")
@@ -132,7 +132,7 @@ def plot_channels(rsk_df, stage, figure_dir):
         figure_name = "post_processing_"
         title = "Post-Processing "
     else:
-        figure_name = stage + " "
+        figure_name = stage + "_"
         title = stage.replace("_", " ").capitalize() + " "
 
     for channel in CHANNELS:
@@ -147,7 +147,6 @@ def plot_channels(rsk_df, stage, figure_dir):
         plt.title(title + channel.replace("_", " ").capitalize() + " vs. Pressure")
         plt.tight_layout()
         plt.savefig(figure_dir + "\\"+ figure_name + channel)
-
 
 
 def plot_pressure_diff(rsk_df, stage, figure_dir):
@@ -183,8 +182,8 @@ def trim_profile(rsk):
     upcast_indices = upcast_indices[up_start:up_end]
     keep_indices = np.sort(np.concatenate([downcast_indices, upcast_indices]))
     rsk.data = rsk.data[keep_indices].copy()
+    plot_channels(pd.DataFrame(rsk.data), "post_trim", os.path.join(dest_dir, "figures"))
 
-    rsk_to_csv(rsk)
     return rsk
 
 def remove_soak(rsk):
@@ -288,7 +287,6 @@ def check_for_zoh(rsk):
 
     print("--------------------------------------------------------------")
 
-
 def prompt_user_for_despiking(channel):
     #ask the user if they want to despike chlorophyll a and/or par
     valid_input = False
@@ -306,6 +304,7 @@ def prompt_user_for_despiking(channel):
     return user_input
 
     ## i think separate prompts for spk and zoh this time, maybe depending on if we want to despike BOTH par and fluo!!
+
 def prompt_user_for_zoh():
     valid_input = False
     while not valid_input:
@@ -322,29 +321,12 @@ def prompt_user_for_zoh():
             print('Invalid input. You must enter either true or false.')
     return user_input
 
-
 def correct_spikes_and_zoh(rsk):
     print("Correcting spikes and zoh...")
     check_for_zoh(rsk)
-    chl = rsk.data['chlorophyll_a']
-
-    print("\nBEFORE correcthold")
-    print("samples:", len(chl))
-    print("NaNs:", np.sum(np.isnan(chl)))
-    print("finite:", np.sum(np.isfinite(chl)))
-    print("min:", np.nanmin(chl))
-    print("max:", np.nanmax(chl))
 
     if prompt_user_for_zoh():
         rsk.correcthold(action = fill_action)
-        chl = rsk.data['chlorophyll_a']
-
-        print("\nAFTER correcthold")
-        print("samples:", len(chl))
-        print("NaNs:", np.sum(np.isnan(chl)))
-        print("finite:", np.sum(np.isfinite(chl)))
-        print("min:", np.nanmin(chl))
-        print("max:", np.nanmax(chl))
     if prompt_user_for_despiking('chlorophyll a'):
         rsk.despike(channels='chlorophyll_a', threshold=spk_std, windowLength=spk_window, action=fill_action)
     if prompt_user_for_despiking('par'):
@@ -353,9 +335,11 @@ def correct_spikes_and_zoh(rsk):
     return rsk
 
 
-def rsk_to_csv(rsk):
+def rsk_to_csv(rsk, file_name):
     RSK2CSV(rsk, outputDir=dest_dir)
-
+    default_csv = os.path.join(dest_dir, rsk_file_name.replace(".rsk", ".csv"))  # same base name as your .rsk file
+    new_csv = os.path.join(dest_dir,file_name)
+    shutil.move(default_csv, new_csv)
 
 def process_rsk():
     raw_rsk = read_rsk() # copy of the untouched raw data
@@ -365,7 +349,7 @@ def process_rsk():
 
     get_sampling_period(rsk)
     create_metadata_file(rsk)
-
+    rsk_to_csv(rsk, rsk_file_name.replace(".rsk", "_raw_data.csv"))
     figure_dir = os.path.join(dest_dir, "figures")
     if not os.path.exists(figure_dir): os.makedirs(figure_dir)
     plot_channels(raw_rsk_df, "pre", figure_dir)
@@ -374,6 +358,16 @@ def process_rsk():
     rsk = derive_values(rsk)
     rsk = trim_profile(rsk)
     rsk = correct_spikes_and_zoh(rsk)
+    rsk_to_csv(rsk, rsk_file_name.replace(".rsk", "_processed.csv"))
+
+    # correct for atmospheric pressure
+    # low-pass filtering (which channel?)
+    # descent rate filtering
+    # derive depth again?
+    # plots
+    # binning
+    # binned plots
+    # output
 
 
 
