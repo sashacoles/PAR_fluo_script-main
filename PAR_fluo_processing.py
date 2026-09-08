@@ -341,6 +341,20 @@ def rsk_to_csv(rsk, file_name):
     new_csv = os.path.join(dest_dir,file_name)
     shutil.move(default_csv, new_csv)
 
+def low_pass_filter():
+    print('applying low pass filter...')
+
+def separate_casts(rsk):
+    downcast_indices, upcast_indices = get_downcast_and_upcast(rsk)
+    rsk_df = pd.DataFrame(rsk.data)
+    rsk_df["Date"] = rsk_df["timestamp"].dt.strftime("%d/%m/%Y")
+    rsk_df["TIME"] = rsk_df["timestamp"].dt.strftime("%H:%M:%S")
+
+    downcast = rsk_df.iloc[downcast_indices].copy()
+    upcast = rsk_df.iloc[upcast_indices].copy()
+
+    return downcast, upcast
+
 def process_rsk():
     raw_rsk = read_rsk() # copy of the untouched raw data
     raw_rsk_df = pd.DataFrame(raw_rsk.data) # convert it into dataframe format
@@ -359,6 +373,11 @@ def process_rsk():
     rsk = trim_profile(rsk)
     rsk = correct_spikes_and_zoh(rsk)
     rsk_to_csv(rsk, rsk_file_name.replace(".rsk", "_processed.csv"))
+
+    downcast_rsk, upcast_rsk = separate_casts(rsk) ## can also return the whole profile as df from this function if needed :p
+    downcast_rsk.to_csv(os.path.join(dest_dir,'downcast.csv'), index=False)
+    upcast_rsk.to_csv(os.path.join(dest_dir, 'upcast.csv'), index=False)
+
 
     # correct for atmospheric pressure
     # low-pass filtering (which channel?)
