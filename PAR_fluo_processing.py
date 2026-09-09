@@ -104,10 +104,11 @@ def derive_values(rsk):
     print("Deriving sea pressure, depth, and velocity...")
     rsk.deriveseapressure()
     rsk.derivedepth()
+    rsk.derivevelocity()
     return rsk
 
 def get_downcast_and_upcast(rsk):
-    # determine which records are upcast, which are downcast, return rsk objects
+    # determine which records are upcast, which are downcast, return indices
     try:
         downcast_indices = rsk.gsetprofilesindices(direction="down")
         upcast_indices = rsk.getprofilesindices(direction="up")
@@ -125,7 +126,7 @@ def get_downcast_and_upcast(rsk):
     return downcast_indices[0], upcast_indices[0]
 
 def plot_channels(rsk_df, stage, figure_dir):
-    ##plot each channel vs pressure
+    ## plot each channel vs pressure
     print("Plotting channels...")
     if stage == "pre" or stage == "1_pre":
         figure_name = "1_pre_processing_"
@@ -183,8 +184,6 @@ def trim_profile(rsk):
     upcast_indices = upcast_indices[up_start:up_end]
     keep_indices = np.sort(np.concatenate([downcast_indices, upcast_indices]))
     rsk.data = rsk.data[keep_indices].copy()
-    plot_channels(pd.DataFrame(rsk.data), "2_post_trim", os.path.join(dest_dir, "figures"))
-
     return rsk
 
 def remove_soak(rsk):
@@ -332,7 +331,6 @@ def correct_spikes_and_zoh(rsk):
         rsk.despike(channels='chlorophyll_a', threshold=spk_std, windowLength=spk_window, action=fill_action)
     if prompt_user_for_despiking('par'):
         rsk.despike(channels='par', threshold=spk_std, windowLength=spk_window, action=fill_action)
-    plot_channels(pd.DataFrame(rsk.data), "3_post_despiking", os.path.join(dest_dir, "figures"))
     return rsk
 
 def rsk_to_csv(rsk, file_name):
@@ -375,6 +373,65 @@ def low_pass_filter(downcast, upcast):
 
     return downcast, upcast
 
+def descent_rate_filter(cast, direction):
+    print("applying descent rate filter and correcting wake effect...")
+    n_before = len(cast)
+
+    press = cast['pressure'].values
+    # go to 10db off the bottom
+    press_max = np.nanmax(press) - 10
+    cast['p_range'] = np.repeat('p_range', len(cast))
+    # get a subset of between 10m and 10 off the bottom
+    cast['p_range'] = np.where(
+        cast['pressure'].between(10, press_max), 'in_range', 'out_range'
+    )
+    subsetter = np.where(
+        (cast['p_range'] == 'in_range') & (cast['velocity'] < 0.3)
+    )
+    ref = press[0]
+
+    if direction == "down":
+        inversions = np.diff(np.r_[press, press[-1]]) < 0 # a mask
+    elif direction == 'up':
+        inversions = np.diff(np.r_[press, press[-1]]) > 0 # a mask
+    else:
+        sys.exit('invalid direction given to descent_rate_filter function. '
+                 'correct this value (line 444-445) and try again.')
+
+    mask = np.zeros_like(inversions)
+    for k, p in enumerate(inversions):
+        if p:
+            ref = press[k]
+            if direction == 'down':
+                cut = press[k + 1:] < ref
+            elif direction == 'up':
+                cut = press[k + 1:] > ref
+            else:
+                sys.exit('invalid direction given to descent_rate_filter function. ')
+            mask[k + 1:][cut] = True
+    # Now also mask the low descent rate between 10db and the 10 off the bottom
+    mask[subsetter] = True
+
+    # Diagnostics
+    n_inversions = np.sum(inversions)
+    n_masked = np.sum(mask)
+    n_low_velocity = len(subsetter[0])
+
+    print(f"  Original rows:       {n_before}")
+    print(f"  Pressure inversions: {n_inversions}")
+    print(f"  Low velocity points: {n_low_velocity}")
+    print(f"  Total rows removed:  {n_masked}")
+
+    cast[mask] = np.nan
+    cast = cast.drop(columns=['p_range', 'velocity'])
+    cast = cast.dropna(how='any')
+
+    n_after = len(cast)
+
+    print(f"  Rows remaining:      {n_after}")
+
+    return cast
+
 def process_rsk():
     raw_rsk = read_rsk() # copy of the untouched raw data
     raw_rsk_df = pd.DataFrame(raw_rsk.data) # convert it into dataframe format
@@ -391,7 +448,11 @@ def process_rsk():
 
     rsk = derive_values(rsk)
     rsk = trim_profile(rsk)
+    plot_channels(pd.DataFrame(rsk.data), "2_post_trim", figure_dir)
+
     rsk = correct_spikes_and_zoh(rsk)
+    plot_channels(pd.DataFrame(rsk.data), "3_post_despiking", figure_dir)
+
     rsk_to_csv(rsk, rsk_file_name.replace(".rsk", "_processed.csv"))
 
     downcast, upcast = separate_casts(rsk) ## can also return the whole profile as df from this function if needed :p
@@ -399,7 +460,12 @@ def process_rsk():
     upcast.to_csv(os.path.join(dest_dir, 'upcast.csv'), index=False)
 
     downcast, upcast = low_pass_filter(downcast, upcast)
-    plot_channels(downcast, '4_post_filter_downcast', figure_dir)
+    plot_channels(downcast, '4_post_filter_downcast', figure_dir) ## can get rid of this after
+
+    downcast = descent_rate_filter(downcast, 'down')
+    upcast = descent_rate_filter(upcast, 'up')
+    plot_channels(downcast, '5_post_delete_downcast', figure_dir)
+
     # correct for atmospheric pressure
     # low-pass filtering (which channel?)
     # descent rate filtering
