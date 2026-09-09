@@ -11,14 +11,16 @@ import copy
 import shutil
 import sys
 import os
+import re
 
 import numpy as np
 import pyrsktools
 import pandas as pd
-from copy import deepcopy
+
 from matplotlib import pyplot as plt
 from openpyxl.styles import Alignment
 from pyrsktools._rsk.export import RSK2CSV
+from scipy import signal
 
 # GLOBAL VARIABLES
 CHANNELS = ["chlorophyll_a", "par"]
@@ -39,6 +41,9 @@ spk_window = 11
 ## clipping variables:
 limit_pressure_change_down = 0.02
 limit_pressure_change_up = -0.03
+## low-pass filter variables:
+filter_type = 'FIR' # can be one of two values: 'FIR' or 'moving average'
+filter_window_width = 6
 
 def read_rsk():
     print("Reading RSK file...")
@@ -95,13 +100,11 @@ def get_sampling_period(rsk):
     else:
         sampling_period = interval
 
-
 def derive_values(rsk):
     print("Deriving sea pressure, depth, and velocity...")
     rsk.deriveseapressure()
     rsk.derivedepth()
     return rsk
-
 
 def get_downcast_and_upcast(rsk):
     # determine which records are upcast, which are downcast, return rsk objects
@@ -121,19 +124,18 @@ def get_downcast_and_upcast(rsk):
 
     return downcast_indices[0], upcast_indices[0]
 
-
 def plot_channels(rsk_df, stage, figure_dir):
     ##plot each channel vs pressure
     print("Plotting channels...")
-    if stage == "pre":
-        figure_name = "pre_processing_"
+    if stage == "pre" or stage == "1_pre":
+        figure_name = "1_pre_processing_"
         title = "Pre-Processing "
     elif stage == "post":
         figure_name = "post_processing_"
         title = "Post-Processing "
     else:
         figure_name = stage + "_"
-        title = stage.replace("_", " ").capitalize() + " "
+        title = re.sub(r'\d+', '', (stage.replace("_", " ") + " "))
 
     for channel in CHANNELS:
         figure, ax = plt.subplots()
@@ -144,10 +146,9 @@ def plot_channels(rsk_df, stage, figure_dir):
         ax.tick_params(bottom=True, top=True, left=True, right=True, labelbottom=True, labeltop=True, labelleft=True, labelright=True)
         plt.ylabel("Pressure (decibar)")
         plt.xlabel(channel.capitalize() + " (" + CHANNEL_UNTIS[channel] + ")")
-        plt.title(title + channel.replace("_", " ").capitalize() + " vs. Pressure")
+        plt.title(title.title() + channel.replace("_", " ").capitalize() + " vs. Pressure")
         plt.tight_layout()
         plt.savefig(figure_dir + "\\"+ figure_name + channel)
-
 
 def plot_pressure_diff(rsk_df, stage, figure_dir):
     ##plot pressure for all scans in rsk data
@@ -182,7 +183,7 @@ def trim_profile(rsk):
     upcast_indices = upcast_indices[up_start:up_end]
     keep_indices = np.sort(np.concatenate([downcast_indices, upcast_indices]))
     rsk.data = rsk.data[keep_indices].copy()
-    plot_channels(pd.DataFrame(rsk.data), "post_trim", os.path.join(dest_dir, "figures"))
+    plot_channels(pd.DataFrame(rsk.data), "2_post_trim", os.path.join(dest_dir, "figures"))
 
     return rsk
 
@@ -331,18 +332,14 @@ def correct_spikes_and_zoh(rsk):
         rsk.despike(channels='chlorophyll_a', threshold=spk_std, windowLength=spk_window, action=fill_action)
     if prompt_user_for_despiking('par'):
         rsk.despike(channels='par', threshold=spk_std, windowLength=spk_window, action=fill_action)
-    plot_channels(pd.DataFrame(rsk.data), "post_despiking", os.path.join(dest_dir, "figures"))
+    plot_channels(pd.DataFrame(rsk.data), "3_post_despiking", os.path.join(dest_dir, "figures"))
     return rsk
-
 
 def rsk_to_csv(rsk, file_name):
     RSK2CSV(rsk, outputDir=dest_dir)
     default_csv = os.path.join(dest_dir, rsk_file_name.replace(".rsk", ".csv"))  # same base name as your .rsk file
     new_csv = os.path.join(dest_dir,file_name)
     shutil.move(default_csv, new_csv)
-
-def low_pass_filter():
-    print('applying low pass filter...')
 
 def separate_casts(rsk):
     downcast_indices, upcast_indices = get_downcast_and_upcast(rsk)
@@ -352,6 +349,29 @@ def separate_casts(rsk):
 
     downcast = rsk_df.iloc[downcast_indices].copy()
     upcast = rsk_df.iloc[upcast_indices].copy()
+
+    return downcast, upcast
+
+def low_pass_filter(downcast, upcast):
+    print('applying low pass filter...')
+    sample_rate = int(np.round(1 / float(sampling_period)))
+
+    if filter_type.lower() == 'fir':
+        Wn = (1.0 / sampling_period) / (sample_rate * 2)
+        # Numerator (b) and denominator (a) polynomials of the IIR filter
+        b, a = signal.butter(2, Wn, "low")
+    elif filter_type.lower() == 'moving average':
+        b = (np.ones(filter_window_width)) / filter_window_width  # numerator co-effs of filter transfer function
+        a = np.ones(1)  # denominator co-effs of filter transfer function
+    else:
+        sys.exit("invalid filter type. \nNavigate to line ~44 and change filter type to either 'FIR' or 'moving average'.")
+
+    downcast["pressure"] = signal.filtfilt(b, a, downcast["pressure"])
+    downcast["chlorophyll_a"] = signal.filtfilt(b, a, downcast["chlorophyll_a"])
+    downcast["par"] = signal.filtfilt(b, a, downcast["par"])
+    upcast["pressure"] = signal.filtfilt(b, a, upcast["pressure"])
+    upcast["chlorophyll_a"] = signal.filtfilt(b, a, upcast["chlorophyll_a"])
+    upcast["par"] = signal.filtfilt(b, a, upcast["par"])
 
     return downcast, upcast
 
@@ -366,7 +386,7 @@ def process_rsk():
     rsk_to_csv(rsk, rsk_file_name.replace(".rsk", "_raw_data.csv"))
     figure_dir = os.path.join(dest_dir, "figures")
     if not os.path.exists(figure_dir): os.makedirs(figure_dir)
-    plot_channels(raw_rsk_df, "pre", figure_dir)
+    plot_channels(raw_rsk_df, "1_pre", figure_dir)
     plot_pressure_diff(raw_rsk_df, "pre", figure_dir)
 
     rsk = derive_values(rsk)
@@ -374,11 +394,12 @@ def process_rsk():
     rsk = correct_spikes_and_zoh(rsk)
     rsk_to_csv(rsk, rsk_file_name.replace(".rsk", "_processed.csv"))
 
-    downcast_rsk, upcast_rsk = separate_casts(rsk) ## can also return the whole profile as df from this function if needed :p
-    downcast_rsk.to_csv(os.path.join(dest_dir,'downcast.csv'), index=False)
-    upcast_rsk.to_csv(os.path.join(dest_dir, 'upcast.csv'), index=False)
+    downcast, upcast = separate_casts(rsk) ## can also return the whole profile as df from this function if needed :p
+    downcast.to_csv(os.path.join(dest_dir,'downcast.csv'), index=False)
+    upcast.to_csv(os.path.join(dest_dir, 'upcast.csv'), index=False)
 
-
+    downcast, upcast = low_pass_filter(downcast, upcast)
+    plot_channels(downcast, '4_post_filter_downcast', figure_dir)
     # correct for atmospheric pressure
     # low-pass filtering (which channel?)
     # descent rate filtering
