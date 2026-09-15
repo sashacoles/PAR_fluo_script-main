@@ -22,13 +22,12 @@ from openpyxl.styles import Alignment
 from pyrsktools._rsk.export import RSK2CSV
 from scipy import signal
 
-# GLOBAL VARIABLES
+# GLOBAL VARIABLES -- DONT CHANGE
 CHANNELS = ["chlorophyll_a", "par"]
 CHANNEL_UNTIS = {"chlorophyll_a" : "µg/l", "par":"µMol/m²/s"}
 processing_record = {}
 original_raw_downcast_data = []
 sampling_period = np.nan
-
 
 
 # USER-DEFINED VARIABLES -- FILL THESE IN BEFORE RUNNING!
@@ -44,6 +43,9 @@ limit_pressure_change_up = -0.03
 ## low-pass filter variables:
 filter_type = 'FIR' # can be one of two values: 'FIR' or 'moving average'
 filter_window_width = 6
+## bin average variables:
+bin_interval_fluo = 1
+bin_interval_par = 0.5
 
 def read_rsk():
     print("Reading RSK file...")
@@ -432,6 +434,42 @@ def descent_rate_filter(cast, direction):
 
     return cast
 
+def bin_average(cast, channel):
+    cast_copy = cast.copy(deep=True)
+
+    if channel == 'par':
+        interval = bin_interval_par
+    elif channel == 'chlorophyll_a':
+        interval = bin_interval_fluo
+    else:
+        sys.exit('invalid channel given to bin_average function. ')
+
+    start_d = np.floor(np.nanmin(cast_copy['depth'].values))
+    # Round the the nearest half to get even intervals
+    start_d = np.round(start_d * 2) / 2
+    # start_d = np.round(start_d)
+    stop_d = np.ceil(np.nanmax(cast_copy['depth'].values))
+    # stop_d = np.round(stop_d)
+    stop_d = np.round(stop_d * 2) / 2
+    new_depth_d = np.arange(start_d - interval / 2, stop_d + 3 * interval / 2, interval)
+    binned_d = pd.cut(cast_copy['depth'], bins=new_depth_d)
+    obs_count_d = cast_copy.groupby(binned_d, observed=False).size()
+    cast_copy = cast_copy.groupby(binned_d, observed=False).mean(numeric_only=True)
+    cast_copy["Observation_counts"] = obs_count_d
+    # Potential for whole row Nan values at top and bottom of output files
+    cast_copy = cast_copy.dropna(axis=0, how="any")  # drop the nans
+    cast_copy["depth"] = cast_copy.index.map(lambda x: x.mid)
+    cast_copy.reset_index(drop=True, inplace=True)
+
+    depth = cast_copy.pop("depth")
+    cast_copy.insert(0, "depth", depth)
+
+    return cast_copy
+
+def pre_vs_post_processing_plots(original, processed, figure_dir):
+    original = trim_profile(original)
+
+
 def process_rsk():
     raw_rsk = read_rsk() # copy of the untouched raw data
     raw_rsk_df = pd.DataFrame(raw_rsk.data) # convert it into dataframe format
@@ -453,19 +491,30 @@ def process_rsk():
     rsk = correct_spikes_and_zoh(rsk)
     plot_channels(pd.DataFrame(rsk.data), "3_post_despiking", figure_dir)
     plot_pressure_diff(pd.DataFrame(rsk.data), "post", figure_dir)
-    rsk_to_csv(rsk, rsk_file_name.replace(".rsk", "_processed.csv"))
 
     downcast, upcast = separate_casts(rsk) ## can also return the whole profile as df from this function if needed :p
-    downcast.to_csv(os.path.join(dest_dir,'downcast.csv'), index=False)
-    upcast.to_csv(os.path.join(dest_dir, 'upcast.csv'), index=False)
+
 
     downcast, upcast = low_pass_filter(downcast, upcast)
     plot_channels(downcast, '4_post_filter_downcast', figure_dir) ## can get rid of this after
 
     downcast = descent_rate_filter(downcast, 'down')
     upcast = descent_rate_filter(upcast, 'up')
+    downcast.to_csv(os.path.join(dest_dir, 'downcast_processed_unbinned.csv'), index=False)
+    upcast.to_csv(os.path.join(dest_dir, 'upcast_processed_unbinned.csv'), index=False)
     plot_channels(downcast, '5_post_delete_downcast', figure_dir)
 
+    downcast_fluo_binned = bin_average(downcast, 'chlorophyll_a')
+    downcast_par_binned = bin_average(downcast, 'par')
+    downcast_fluo_binned.to_csv(os.path.join(dest_dir, 'downcast_processed_fluo_binned.csv'), index=False)
+    downcast_par_binned.to_csv(os.path.join(dest_dir, 'downcast_processed_par_binned.csv'), index=False)
+
+    upcast_fluo_binned = bin_average(upcast, 'chlorophyll_a')
+    upcast_par_binned = bin_average(upcast, 'par')
+    upcast_fluo_binned.to_csv(os.path.join(dest_dir, 'upcast_processed_fluo_binned.csv'), index=False)
+    upcast_par_binned.to_csv(os.path.join(dest_dir, 'upcast_processed_par_binned.csv'), index=False)
+
+    pre_vs_post_processing_plots(raw_rsk_df, downcast_fluo_binned, figure_dir)
     # correct for atmospheric pressure
     # chlorphyll correction
     # derive depth again?
