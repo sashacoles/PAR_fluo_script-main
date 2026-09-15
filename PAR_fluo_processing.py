@@ -32,8 +32,8 @@ sampling_period = np.nan
 
 
 # USER-DEFINED VARIABLES -- FILL THESE IN BEFORE RUNNING!
-dest_dir = "C:\\Users\\COLESS\\Documents\\Python_CTDscript\\PAR_fluo_script-main\\station2"
-rsk_file_name = "Eureka2024_PAR_Fluo_St2.rsk"
+dest_dir = "C:\\Users\\COLESS\\Documents\\Python_CTDscript\\PAR_fluo_script-main\\station1"
+rsk_file_name = "Eureka2024_PAR_Fluo_St1.rsk"
 fill_action = 'interp' ## how we want to correct for zero order holds and despike--can either be 'interp' or na
 ## despiking variables:
 spk_std = 3
@@ -444,15 +444,15 @@ def process_rsk():
     figure_dir = os.path.join(dest_dir, "figures")
     if not os.path.exists(figure_dir): os.makedirs(figure_dir)
     plot_channels(raw_rsk_df, "1_pre", figure_dir)
-    plot_pressure_diff(raw_rsk_df, "pre", figure_dir)
 
     rsk = derive_values(rsk)
     rsk = trim_profile(rsk)
+    plot_pressure_diff(pd.DataFrame(rsk.data), "pre", figure_dir)
     plot_channels(pd.DataFrame(rsk.data), "2_post_trim", figure_dir)
 
     rsk = correct_spikes_and_zoh(rsk)
     plot_channels(pd.DataFrame(rsk.data), "3_post_despiking", figure_dir)
-
+    plot_pressure_diff(pd.DataFrame(rsk.data), "post", figure_dir)
     rsk_to_csv(rsk, rsk_file_name.replace(".rsk", "_processed.csv"))
 
     downcast, upcast = separate_casts(rsk) ## can also return the whole profile as df from this function if needed :p
@@ -467,8 +467,7 @@ def process_rsk():
     plot_channels(downcast, '5_post_delete_downcast', figure_dir)
 
     # correct for atmospheric pressure
-    # low-pass filtering (which channel?)
-    # descent rate filtering
+    # chlorphyll correction
     # derive depth again?
     # plots
     # binning
