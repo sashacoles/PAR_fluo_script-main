@@ -465,13 +465,95 @@ def bin_average(cast, channel):
     cast_copy.insert(0, "depth", depth)
 
     return cast_copy
+def format_processing_plot(
+        ax: plt.Axes,
+        x_var_name: str,
+        x_var_units,
+        y_var_name: str,
+        y_var_units: str,
+        plot_title: str,
+        invert_yaxis: bool,
+        add_legend: bool = False,
+) -> None:
+    """
+    Format a plot that has already been initialized.
+    inputs:
+        - ax: from fig, ax = plt.subplots()
+        - var_name: one of Temperature, Conductivity, Salinity,
+                    Fluorescence, Oxygen, Oxygen_mL_L, Oxygen_umol_kg
+        - var_units: the units corresponding to the selected var_name
+        - plot_title: Should indicate which processing step the plots are at
+        - add_legend: If True then add a legend to the plot, default False
+    """
+    if invert_yaxis:
+        ax.invert_yaxis()
+    ax.xaxis.set_label_position("top")
+    ax.xaxis.set_ticks_position("top")
 
-def pre_vs_post_processing_plots(original, processed, figure_dir):
-    original = trim_profile(original)
+    # Add ticks to top and right sides of the plot, like IOS Shell does
+    ax.tick_params(
+        bottom=True,
+        top=True,
+        left=True,
+        right=True,
+        labelbottom=True,
+        labeltop=True,
+        labelleft=True,
+        labelright=True,
+    )
 
+    # For Oxygen_mL_L and Oxygen_umol_kg, remove the units at the end of the var_name
+    # since the units will go in brackets after
+    x_var_name = x_var_name.split("_")[0]
+
+    if x_var_units is not None:
+        ax.set_xlabel(f"{x_var_name} ({x_var_units})")
+    else:
+        ax.set_xlabel(f"{x_var_name}")
+    ax.set_ylabel(f"{y_var_name} ({y_var_units})")
+    ax.set_title(plot_title, fontsize=5)
+    if add_legend:
+        ax.legend()
+    plt.tight_layout()
+    return
+
+def pre_vs_post_processing_plots(original, processed, figure_dir, channel):
+    fig, ax = plt.subplots()
+    ax.plot(
+        processed[channel],
+        processed['pressure'],
+        color="red",
+        linewidth=1.1,
+        label="Processed",
+
+    )
+    ax.plot(
+        original[channel],
+        original['pressure'],
+        color="blue",
+        linewidth=1.1,
+        alpha=0.5,
+        label="Raw",
+    )
+
+    format_processing_plot(
+        ax,
+        x_var_name=channel,
+        x_var_units=CHANNEL_UNTIS[channel],
+        y_var_name="Pressure",
+        y_var_units="dbar",
+        plot_title=f"Raw vs Processed {channel}",
+        invert_yaxis=True,
+    )
+
+    ax.legend()
+
+    plt.savefig(os.path.join(figure_dir, f"Pre_VS_Post_Processing_{channel}_binned.png"), dpi=300,
+                bbox_inches="tight", )
 
 def process_rsk():
     raw_rsk = read_rsk() # copy of the untouched raw data
+    raw_rsk = trim_profile(raw_rsk)
     raw_rsk_df = pd.DataFrame(raw_rsk.data) # convert it into dataframe format
 
     rsk = read_rsk() # copy of the rsk object that will be processed
@@ -481,7 +563,7 @@ def process_rsk():
     rsk_to_csv(rsk, rsk_file_name.replace(".rsk", "_raw_data.csv"))
     figure_dir = os.path.join(dest_dir, "figures")
     if not os.path.exists(figure_dir): os.makedirs(figure_dir)
-    plot_channels(raw_rsk_df, "1_pre", figure_dir)
+    plot_channels(pd.DataFrame(rsk.data), "1_pre", figure_dir)
 
     rsk = derive_values(rsk)
     rsk = trim_profile(rsk)
@@ -514,7 +596,9 @@ def process_rsk():
     upcast_fluo_binned.to_csv(os.path.join(dest_dir, 'upcast_processed_fluo_binned.csv'), index=False)
     upcast_par_binned.to_csv(os.path.join(dest_dir, 'upcast_processed_par_binned.csv'), index=False)
 
-    pre_vs_post_processing_plots(raw_rsk_df, downcast_fluo_binned, figure_dir)
+    pre_vs_post_processing_plots(raw_rsk_df, downcast_fluo_binned, figure_dir, 'chlorophyll_a')
+    pre_vs_post_processing_plots(raw_rsk_df, downcast_par_binned, figure_dir, 'par')
+
     # correct for atmospheric pressure
     # chlorphyll correction
     # derive depth again?
