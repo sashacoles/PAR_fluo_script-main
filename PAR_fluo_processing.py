@@ -31,8 +31,8 @@ sampling_period = np.nan
 
 
 # USER-DEFINED VARIABLES -- FILL THESE IN BEFORE RUNNING!
-dest_dir = "C:\\Users\\COLESS\\Documents\\Python_CTDscript\\PAR_fluo_script-main\\station1"
-rsk_file_name = "Eureka2024_PAR_Fluo_St1.rsk"
+dest_dir = "C:\\Users\\COLESS\\Documents\\Python_CTDscript\\PAR_fluo_script-main\\station3"
+rsk_file_name = "Eureka2024_PAR_Fluo_St3.rsk"
 fill_action = 'interp' ## how we want to correct for zero order holds and despike--can either be 'interp' or na
 ## despiking variables:
 spk_std = 3
@@ -533,7 +533,7 @@ def pre_vs_post_processing_plots(original, processed, figure_dir, channel):
         color="blue",
         linewidth=1.1,
         alpha=0.5,
-        label="Raw",
+        label="Raw (trimmed & despiked only)",
     )
 
     format_processing_plot(
@@ -548,13 +548,14 @@ def pre_vs_post_processing_plots(original, processed, figure_dir, channel):
 
     ax.legend()
 
-    plt.savefig(os.path.join(figure_dir, f"Pre_VS_Post_Processing_{channel}_binned.png"), dpi=300,
+    plt.savefig(os.path.join(figure_dir, f"Despiked_VS_Post_Processing_{channel}_binned.png"), dpi=300,
                 bbox_inches="tight", )
 
 def process_rsk():
-    raw_rsk = read_rsk() # copy of the untouched raw data
-    raw_rsk = trim_profile(raw_rsk)
-    raw_rsk_df = pd.DataFrame(raw_rsk.data) # convert it into dataframe format
+    # raw_rsk = read_rsk() # copy of the untouched raw data
+    # raw_rsk = trim_profile(raw_rsk)
+    # raw_rsk = correct_spikes_and_zoh(raw_rsk)
+    # raw_rsk_df = pd.DataFrame(raw_rsk.data) # convert it into dataframe format
 
     rsk = read_rsk() # copy of the rsk object that will be processed
 
@@ -573,6 +574,7 @@ def process_rsk():
     rsk = correct_spikes_and_zoh(rsk)
     plot_channels(pd.DataFrame(rsk.data), "3_post_despiking", figure_dir)
     plot_pressure_diff(pd.DataFrame(rsk.data), "post", figure_dir)
+    raw_rsk_df = pd.DataFrame(rsk.data) ## save the rsk object in its current state so we can use it to plot before/after processing
 
     downcast, upcast = separate_casts(rsk) ## can also return the whole profile as df from this function if needed :p
 
