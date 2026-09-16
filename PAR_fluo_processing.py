@@ -31,8 +31,8 @@ sampling_period = np.nan
 
 
 # USER-DEFINED VARIABLES -- FILL THESE IN BEFORE RUNNING!
-dest_dir = "C:\\Users\\COLESS\\Documents\\Python_CTDscript\\PAR_fluo_script-main\\station3"
-rsk_file_name = "Eureka2024_PAR_Fluo_St3.rsk"
+dest_dir = "C:\\Users\\COLESS\\Documents\\Python_CTDscript\\PAR_fluo_script-main\\station4"
+rsk_file_name = "Eureka2024_PAR_Fluo_St4.rsk"
 fill_action = 'interp' ## how we want to correct for zero order holds and despike--can either be 'interp' or na
 ## despiking variables:
 spk_std = 3
@@ -48,6 +48,12 @@ bin_interval_fluo = 1
 bin_interval_par = 0.5
 
 def read_rsk():
+    """
+    reads in the .rsk file specified by dest_dir and rsk_file_name
+    creates an rsk object with all data and metadata
+    Returns:
+        a new rsk object
+    """
     print("Reading RSK file...")
     file_name = str(dest_dir + "\\" + rsk_file_name)
     rsk = pyrsktools.RSK(file_name, readHiddenChannels=False)
@@ -64,6 +70,9 @@ def read_rsk():
     return rsk
 
 def create_metadata_file(rsk):
+    """
+    creates the file metadata.xlsx in dest_dir containing metadata of the read in .rsk file
+    """
     metadata_dict = {}
     metadata_file_name = dest_dir + "\\metadata.xlsx"
 
@@ -94,6 +103,12 @@ def create_metadata_file(rsk):
     print("Creating metadata file...")
 
 def get_sampling_period(rsk):
+    """
+    gets sampling period in seconds from rsk object
+    this value is assigned to the global variable sampling_period
+    if no sampling period can be detected, program will halt--user must manually enter
+    sampling period on line 30
+    """
     interval = rsk.scheduleInfo.samplingperiod()
     global sampling_period
 
@@ -103,6 +118,9 @@ def get_sampling_period(rsk):
         sampling_period = interval
 
 def derive_values(rsk):
+    """
+    derives sea pressure, depth, and velocity
+    """
     print("Deriving sea pressure, depth, and velocity...")
     rsk.deriveseapressure()
     rsk.derivedepth()
@@ -110,12 +128,18 @@ def derive_values(rsk):
     return rsk
 
 def get_downcast_and_upcast(rsk):
-    # determine which records are upcast, which are downcast, return indices
+    """
+    given a full rsk profile, determine the indices of the downcast and the indices of the upcast
+    throws error if either downcast or upcast indices cannot be detected
+    Returns:
+        a list of the downcast indicies
+        a list of the upcast indices
+    """
     try:
         downcast_indices = rsk.gsetprofilesindices(direction="down")
         upcast_indices = rsk.getprofilesindices(direction="up")
     except AttributeError:
-        rsk.computeprofiles()  # This should fix the problem
+        rsk.computeprofiles()
         downcast_indices = rsk.getprofilesindices(direction="down")
         upcast_indices = rsk.getprofilesindices(direction="up")
 
@@ -128,9 +152,16 @@ def get_downcast_and_upcast(rsk):
     return downcast_indices[0], upcast_indices[0]
 
 def plot_channels(rsk_df, stage, figure_dir):
-    ## plot each channel vs pressure
-    print("Plotting channels...")
-    if stage == "pre" or stage == "1_pre":
+    """
+    plot chlorophyll a and PAR against pressure at different stages of the pipeline
+    will create two .png files, one for par one for chla
+    all figure file names will be numbered, in order of step in the pipeline (trim = 1, despike/holds = 2, ...)
+    Args:
+        rsk_df: the current rsk object, converted to a dataframe
+        stage: a string indicating the stage of the pipeline we're at, will determine plot title+file name
+        figure_dir: directory to save figures to
+    """
+    if stage == "pre" or stage == "1_pre": ## this logic is here b/c the final else statement will likely be removed after confirmation that all processing steps are correct
         figure_name = "1_pre_processing_"
         title = "Pre-Processing "
     elif stage == "post":
@@ -154,8 +185,16 @@ def plot_channels(rsk_df, stage, figure_dir):
         plt.savefig(figure_dir + "\\"+ figure_name + channel)
 
 def plot_pressure_diff(rsk_df, stage, figure_dir):
-    ##plot pressure for all scans in rsk data
-    print("Plotting pressure...")
+    """
+    will plot pressure differences between consecutive scans for entire profile
+    plot can be used to check for zero-order holds in the pressure channel
+    produces one .png file
+    Args:
+        rsk_df: the current rsk object, converted to a dataframe
+        stage: a string (either 'pre' or 'post' indicating the stage of the pipeline we're at, will determine plot title+file name
+        figure_dir: directory to save figures to
+    """
+    print("Plotting pressure differences before hold corrections...")
 
     if stage == "pre":
         figure_name = "pressure_differences.png"
@@ -178,6 +217,13 @@ def plot_pressure_diff(rsk_df, stage, figure_dir):
     plt.savefig(os.path.join(figure_dir + "\\" + figure_name))
 
 def trim_profile(rsk):
+    """
+    will remove unneeded/inaccurate data from the beginning and end of the profile
+    soak time is removed first (from the beginning of downcast only)
+    beginning and end of downcast and upcast are trimmed using clip_cast() to detect indices where cuts are needed
+    Return:
+        rsk object with trimmed downcast and upcast
+    """
     rsk = remove_soak(rsk)
     downcast_indices, upcast_indices = get_downcast_and_upcast(rsk)
     down_start, down_end = clip_cast(rsk, 'down', downcast_indices, limit_pressure_change_down)
@@ -434,6 +480,18 @@ def descent_rate_filter(cast, direction):
 
     return cast
 
+def bin_casts(downcast, upcast):
+    downcast_fluo_binned = bin_average(downcast, 'chlorophyll_a')
+    downcast_par_binned = bin_average(downcast, 'par')
+    downcast_fluo_binned.to_csv(os.path.join(dest_dir, 'downcast_processed_fluo_binned.csv'), index=False)
+    downcast_par_binned.to_csv(os.path.join(dest_dir, 'downcast_processed_par_binned.csv'), index=False)
+
+    upcast_fluo_binned = bin_average(upcast, 'chlorophyll_a')
+    upcast_par_binned = bin_average(upcast, 'par')
+    upcast_fluo_binned.to_csv(os.path.join(dest_dir, 'upcast_processed_fluo_binned.csv'), index=False)
+    upcast_par_binned.to_csv(os.path.join(dest_dir, 'upcast_processed_par_binned.csv'), index=False)
+    return downcast_fluo_binned, downcast_par_binned
+
 def bin_average(cast, channel):
     cast_copy = cast.copy(deep=True)
 
@@ -552,18 +610,13 @@ def pre_vs_post_processing_plots(original, processed, figure_dir, channel):
                 bbox_inches="tight", )
 
 def process_rsk():
-    # raw_rsk = read_rsk() # copy of the untouched raw data
-    # raw_rsk = trim_profile(raw_rsk)
-    # raw_rsk = correct_spikes_and_zoh(raw_rsk)
-    # raw_rsk_df = pd.DataFrame(raw_rsk.data) # convert it into dataframe format
-
-    rsk = read_rsk() # copy of the rsk object that will be processed
+    rsk = read_rsk()
 
     get_sampling_period(rsk)
     create_metadata_file(rsk)
     rsk_to_csv(rsk, rsk_file_name.replace(".rsk", "_raw_data.csv"))
     figure_dir = os.path.join(dest_dir, "figures")
-    if not os.path.exists(figure_dir): os.makedirs(figure_dir)
+    os.makedirs(figure_dir, exist_ok=True)
     plot_channels(pd.DataFrame(rsk.data), "1_pre", figure_dir)
 
     rsk = derive_values(rsk)
@@ -578,7 +631,6 @@ def process_rsk():
 
     downcast, upcast = separate_casts(rsk) ## can also return the whole profile as df from this function if needed :p
 
-
     downcast, upcast = low_pass_filter(downcast, upcast)
     plot_channels(downcast, '4_post_filter_downcast', figure_dir) ## can get rid of this after
 
@@ -588,28 +640,9 @@ def process_rsk():
     upcast.to_csv(os.path.join(dest_dir, 'upcast_processed_unbinned.csv'), index=False)
     plot_channels(downcast, '5_post_delete_downcast', figure_dir)
 
-    downcast_fluo_binned = bin_average(downcast, 'chlorophyll_a')
-    downcast_par_binned = bin_average(downcast, 'par')
-    downcast_fluo_binned.to_csv(os.path.join(dest_dir, 'downcast_processed_fluo_binned.csv'), index=False)
-    downcast_par_binned.to_csv(os.path.join(dest_dir, 'downcast_processed_par_binned.csv'), index=False)
-
-    upcast_fluo_binned = bin_average(upcast, 'chlorophyll_a')
-    upcast_par_binned = bin_average(upcast, 'par')
-    upcast_fluo_binned.to_csv(os.path.join(dest_dir, 'upcast_processed_fluo_binned.csv'), index=False)
-    upcast_par_binned.to_csv(os.path.join(dest_dir, 'upcast_processed_par_binned.csv'), index=False)
+    downcast_fluo_binned, downcast_par_binned = bin_casts(downcast, upcast)
 
     pre_vs_post_processing_plots(raw_rsk_df, downcast_fluo_binned, figure_dir, 'chlorophyll_a')
     pre_vs_post_processing_plots(raw_rsk_df, downcast_par_binned, figure_dir, 'par')
-
-    # correct for atmospheric pressure
-    # chlorphyll correction
-    # derive depth again?
-    # plots
-    # binning
-    # binned plots
-    # output
-
-
-
 
 process_rsk()
