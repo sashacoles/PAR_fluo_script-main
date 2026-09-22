@@ -235,6 +235,14 @@ def trim_profile(rsk):
     return rsk
 
 def remove_soak(rsk):
+    """
+    soak time is removed from the beginning of the profile's downcast
+    record where pressure starts increasing meaningfully, and continues to increase, becomes the start of the downcast
+    Args:
+        rsk: rsk object that has not been trimmed in any way
+    Returns:
+        rsk object with soak period removed
+    """
     print("- Removing soak from beginning of downcast")
     window = 100
     run = 100  ## instrument must be actively dropping/rising for at least 100 samples in a row
@@ -257,10 +265,21 @@ def remove_soak(rsk):
         start = 0
 
     rsk.data = rsk.data[start:]
-
     return rsk
 
 def clip_cast(rsk, cast_direction, indices, limit_pressure_change):
+    """
+    finds indices of all unstable measurements that are to be removed, from beginning and end of cast
+    determines records to be removed separately for downcast and upcast
+    Args:
+        rsk: rsk object that has had soak period removed
+        cast_direction: string indicating if we should consider downcast or upcast
+        indices: indices of the rsk object that are part of the cast indicated by cast_direction
+        limit_pressure_change: limit for pressure change in db, used to determine if instrument is actually moving or not
+    Returns:
+        cut_start: new starting index of either upcast or downcast, previous records should be cut
+        cut_end: new ending index of either upcast or downcast, any records after this index should be cut
+    """
     pressure = pd.Series(rsk.data["pressure"][indices])
     diff = pressure.diff()
 
@@ -308,6 +327,14 @@ def clip_cast(rsk, cast_direction, indices, limit_pressure_change):
 ## this might be misleading since it only talks about pressure
 ## but other channels have holds that should be fixed/interpolated, not just pressure
 def check_for_zoh(rsk):
+    """
+    Compute first order differences on pressure data to determine whether
+    a correction for zero-order holds is needed.
+    From DFO Technical Report 314:
+    'The analog-to-digital (A2D) converter on RBR instruments must recalibrate once per
+    minute.'
+    Only checks for holds in the pressure channel
+    """
     print("Checking for zoh...")
     rsk_df = pd.DataFrame(rsk.data)
     pressure = pd.to_numeric(rsk_df["pressure"], errors="coerce").dropna()
@@ -336,7 +363,13 @@ def check_for_zoh(rsk):
     print("--------------------------------------------------------------")
 
 def prompt_user_for_despiking(channel):
-    #ask the user if they want to despike chlorophyll a and/or par
+    """
+    Prompt the user in terminal to answer if they want to despike a given channel
+    Args:
+        channel: string containing either "chlorophyll_a" or "par", determines which channel user is asked about
+    Returns:
+        user_input: boolean, true if channel should be despiked
+    """
     valid_input = False
     while not valid_input:
         user_input = input(f'Is despiking needed for {channel}? Enter either true or false:').lower().strip()
@@ -354,6 +387,10 @@ def prompt_user_for_despiking(channel):
     ## i think separate prompts for spk and zoh this time, maybe depending on if we want to despike BOTH par and fluo!!
 
 def prompt_user_for_zoh():
+    """
+    prompts user in the terminal to answer if they want to correct for zero-order holds
+    re-prompts until user enters valid input
+    """
     valid_input = False
     while not valid_input:
         user_input = input('Is zero order hold correction needed? Enter either true or false:').lower().strip()
@@ -370,6 +407,14 @@ def prompt_user_for_zoh():
     return user_input
 
 def correct_spikes_and_zoh(rsk):
+    """
+    based on the user's answers to prompted questions, despiking and hold correction will take place
+    if user said yes to hold correction, holds will be corrected in ALL channels
+    only channels the user indicated should be despiked will be corrected, and the user defined values
+    for threshold, window, and fill action are used
+    Returns:
+        rsk: rsk object with spikes and holds corrected
+    """
     print("Correcting spikes and zoh...")
     check_for_zoh(rsk)
 
@@ -382,12 +427,18 @@ def correct_spikes_and_zoh(rsk):
     return rsk
 
 def rsk_to_csv(rsk, file_name):
+    """
+    saves a rsk object to a csv file, with a given file name
+    """
     RSK2CSV(rsk, outputDir=dest_dir)
     default_csv = os.path.join(dest_dir, rsk_file_name.replace(".rsk", ".csv"))  # same base name as your .rsk file
     new_csv = os.path.join(dest_dir,file_name)
     shutil.move(default_csv, new_csv)
 
 def separate_casts(rsk):
+    """
+    separates a rsk object into separate downcast and upcast dataframes
+    """
     downcast_indices, upcast_indices = get_downcast_and_upcast(rsk)
     rsk_df = pd.DataFrame(rsk.data)
     rsk_df["Date"] = rsk_df["timestamp"].dt.strftime("%d/%m/%Y")
@@ -399,6 +450,13 @@ def separate_casts(rsk):
     return downcast, upcast
 
 def low_pass_filter(downcast, upcast):
+    """
+    Filter the pressure, chlorophyll a, and PAR
+    exact filter type depends on user-input value for the variable filter_type (FIR or moving avg)
+    Returns:
+        downcast: filtered downcast dataframe
+        upcast: filtered upcast dataframe
+    """
     print('applying low pass filter...')
     sample_rate = int(np.round(1 / float(sampling_period)))
 
@@ -422,6 +480,15 @@ def low_pass_filter(downcast, upcast):
     return downcast, upcast
 
 def descent_rate_filter(cast, direction):
+    """
+    Detect and delete pressure reversals (swells/slow drop),
+    correct for the wake effect
+    Args:
+        cast: dataframe containing the current downcast or upcast
+        direction: string indicating if cast dataframe contains upcast or downcast data
+    Returns:
+        cast: filtered downcast/upcast dataframe
+    """
     print("applying descent rate filter and correcting wake effect...")
     n_before = len(cast)
 
@@ -460,27 +527,23 @@ def descent_rate_filter(cast, direction):
     # Now also mask the low descent rate between 10db and the 10 off the bottom
     mask[subsetter] = True
 
-    # Diagnostics
-    n_inversions = np.sum(inversions)
-    n_masked = np.sum(mask)
-    n_low_velocity = len(subsetter[0])
-
-    print(f"  Original rows:       {n_before}")
-    print(f"  Pressure inversions: {n_inversions}")
-    print(f"  Low velocity points: {n_low_velocity}")
-    print(f"  Total rows removed:  {n_masked}")
-
     cast[mask] = np.nan
     cast = cast.drop(columns=['p_range', 'velocity'])
     cast = cast.dropna(how='any')
 
-    n_after = len(cast)
-
-    print(f"  Rows remaining:      {n_after}")
-
     return cast
 
 def bin_casts(downcast, upcast):
+    """
+    bin both casts by depth and write binned data to csv files
+    for each cast, 2 versions are created/saved: one binned at the interval bin_interval_fluo and the other at the interval bin_interval_par
+    Args:
+        downcast: fully processed downcast data in dataframe format
+        upcast: fully processed upcast data in dataframe format
+    Returns:
+        downcast_fluo_binned: downcast data that has been binned at the interval specified by bin_interval_fluo
+        downcast_par_binned: downcast data that has been binned at the interval specified by bin_interval_par
+    """
     downcast_fluo_binned = bin_average(downcast, 'chlorophyll_a')
     downcast_par_binned = bin_average(downcast, 'par')
     downcast_fluo_binned.to_csv(os.path.join(dest_dir, 'downcast_processed_fluo_binned.csv'), index=False)
@@ -493,6 +556,15 @@ def bin_casts(downcast, upcast):
     return downcast_fluo_binned, downcast_par_binned
 
 def bin_average(cast, channel):
+    """
+    bins the passed in cast by depth and averages the other channel's values across the interval
+    bin intervals are determined by user-defined values bin_interval_fluo and bin_interval_par
+    Args:
+        cast: dataframe containing either upcast or downcast data
+        channel: channel name, determines whichinterval value should be used
+    Returns:
+        cast_copy: cast dataframe that is binned by depth at the specified interval
+    """
     cast_copy = cast.copy(deep=True)
 
     if channel == 'par':
@@ -523,6 +595,7 @@ def bin_average(cast, channel):
     cast_copy.insert(0, "depth", depth)
 
     return cast_copy
+
 def format_processing_plot(
         ax: plt.Axes,
         x_var_name: str,
@@ -576,6 +649,14 @@ def format_processing_plot(
     return
 
 def pre_vs_post_processing_plots(original, processed, figure_dir, channel):
+    """
+    creates figures that plot the raw data and the processed data together
+    Args:
+        original: unprocessed (but despiked) data in dataframe format
+        processed: fully processed data in dataframe format
+        figure_dir: directory where figures will be saved
+        channel: which channel to plot
+    """
     fig, ax = plt.subplots()
     ax.plot(
         processed[channel],
@@ -610,6 +691,18 @@ def pre_vs_post_processing_plots(original, processed, figure_dir, channel):
                 bbox_inches="tight", )
 
 def process_rsk():
+    """
+    main function to run all processing steps:
+        - read rsk file
+        - create metadata file
+        - derive values
+        - trim casts
+        - despiking and zoh correction
+        - low pass filter
+        - descent rate filter
+        - bin data
+        - plots
+    """
     rsk = read_rsk()
 
     get_sampling_period(rsk)
