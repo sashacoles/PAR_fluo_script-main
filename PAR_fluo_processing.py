@@ -7,7 +7,6 @@ guidelines outlined in Halverson et al. (2017).
 
 This code is based on the RBR CTD processing script found here: https://github.com/IOS-OSD-DPG/RBR-CTD-Processing/tree/main
 """
-import copy
 import shutil
 import sys
 import os
@@ -29,10 +28,9 @@ processing_record = {}
 original_raw_downcast_data = []
 sampling_period = np.nan
 
-
-# USER-DEFINED VARIABLES -- FILL THESE IN BEFORE RUNNING!
-dest_dir = "C:\\Users\\COLESS\\Documents\\Python_CTDscript\\PAR_fluo_script-main\\station4"
-rsk_file_name = "Eureka2024_PAR_Fluo_St4.rsk"
+# USER-DEFINED VARIABLES -- FILL THESE IN BEFORE RUNNING
+dest_dir = "C:\\Users\\COLESS\\Documents\\Python_CTDscript\\PAR_fluo_script-main\\station5"
+rsk_file_name = "Eureka2024_PAR_Fluo_St5.rsk"
 fill_action = 'interp' ## how we want to correct for zero order holds and despike--can either be 'interp' or na
 ## despiking variables:
 spk_std = 3
@@ -46,6 +44,7 @@ filter_window_width = 6
 ## bin average variables:
 bin_interval_fluo = 1
 bin_interval_par = 0.5
+#--------------------------------------------
 
 def read_rsk():
     """
@@ -73,6 +72,7 @@ def create_metadata_file(rsk):
     """
     creates the file metadata.xlsx in dest_dir containing metadata of the read in .rsk file
     """
+    print("Creating metadata file...")
     metadata_dict = {}
     metadata_file_name = dest_dir + "\\metadata.xlsx"
 
@@ -100,7 +100,6 @@ def create_metadata_file(rsk):
 
         worksheet.column_dimensions["A"].width = 20
         worksheet.column_dimensions["B"].width = 100
-    print("Creating metadata file...")
 
 def get_sampling_period(rsk):
     """
