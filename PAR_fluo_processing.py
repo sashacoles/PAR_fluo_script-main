@@ -29,8 +29,8 @@ original_raw_downcast_data = []
 sampling_period = np.nan
 
 # USER-DEFINED VARIABLES -- FILL THESE IN BEFORE RUNNING
-dest_dir = "C:\\Users\\COLESS\\Documents\\Python_CTDscript\\PAR_fluo_script-main\\station5"
-rsk_file_name = "Eureka2024_PAR_Fluo_St5.rsk"
+dest_dir = "C:\\Users\\COLESS\\Documents\\Python_CTDscript\\PAR_fluo_script-main\\station3"
+rsk_file_name = "Eureka2024_PAR_Fluo_St3.rsk"
 fill_action = 'interp' ## how we want to correct for zero order holds and despike--can either be 'interp' or na
 ## despiking variables:
 spk_std = 3
@@ -42,8 +42,10 @@ limit_pressure_change_up = -0.03
 filter_type = 'FIR' # can be one of two values: 'FIR' or 'moving average'
 filter_window_width = 6
 ## bin average variables:
-bin_interval_fluo = 1
-bin_interval_par = 0.5
+bin_interval = 1
+## detection thresholds for channels, values below these will be set to NaN
+fluo_detection_threshold = 0.02
+par_detection_threshold = 0
 #--------------------------------------------
 
 def read_rsk():
@@ -500,7 +502,7 @@ def descent_rate_filter(cast, direction):
         cast['pressure'].between(10, press_max), 'in_range', 'out_range'
     )
     subsetter = np.where(
-        (cast['p_range'] == 'in_range') & (cast['velocity'] < 0.1)
+        (cast['p_range'] == 'in_range') & (np.abs(cast['velocity']) < 0.1)
     )
     ref = press[0]
 
@@ -535,43 +537,34 @@ def descent_rate_filter(cast, direction):
 def bin_casts(downcast, upcast):
     """
     bin both casts by depth and write binned data to csv files
-    for each cast, 2 versions are created/saved: one binned at the interval bin_interval_fluo and the other at the interval bin_interval_par
     Args:
         downcast: fully processed downcast data in dataframe format
         upcast: fully processed upcast data in dataframe format
     Returns:
-        downcast_fluo_binned: downcast data that has been binned at the interval specified by bin_interval_fluo
-        downcast_par_binned: downcast data that has been binned at the interval specified by bin_interval_par
+        downcast_binned: downcast data that has been binned at the interval specified by bin_interval
     """
-    downcast_fluo_binned = bin_average(downcast, 'chlorophyll_a')
-    downcast_par_binned = bin_average(downcast, 'par')
-    downcast_fluo_binned.to_csv(os.path.join(dest_dir, 'downcast_processed_fluo_binned.csv'), index=False)
-    downcast_par_binned.to_csv(os.path.join(dest_dir, 'downcast_processed_par_binned.csv'), index=False)
+    downcast_binned = bin_average(downcast)
+    downcast_binned.to_csv(os.path.join(dest_dir, 'downcast_processed_binned.csv'), index=False)
 
-    upcast_fluo_binned = bin_average(upcast, 'chlorophyll_a')
-    upcast_par_binned = bin_average(upcast, 'par')
-    upcast_fluo_binned.to_csv(os.path.join(dest_dir, 'upcast_processed_fluo_binned.csv'), index=False)
-    upcast_par_binned.to_csv(os.path.join(dest_dir, 'upcast_processed_par_binned.csv'), index=False)
-    return downcast_fluo_binned, downcast_par_binned
+    upcast_binned = bin_average(upcast)
+    upcast_binned.to_csv(os.path.join(dest_dir, 'upcast_processed_binned.csv'), index=False)
+    return downcast_binned
 
-def bin_average(cast, channel):
+def bin_average(cast):
     """
     bins the passed in cast by depth and averages the other channel's values across the interval
-    bin intervals are determined by user-defined values bin_interval_fluo and bin_interval_par
+    bin intervals are determined by user-defined value bin_interval
     Args:
         cast: dataframe containing either upcast or downcast data
-        channel: channel name, determines whichinterval value should be used
     Returns:
         cast_copy: cast dataframe that is binned by depth at the specified interval
     """
     cast_copy = cast.copy(deep=True)
 
-    if channel == 'par':
-        interval = bin_interval_par
-    elif channel == 'chlorophyll_a':
-        interval = bin_interval_fluo
+    if isinstance(bin_interval, int) and bin_interval > 0:
+        interval = bin_interval
     else:
-        sys.exit('invalid channel given to bin_average function. ')
+        sys.exit('invalid value given to bin_interval variable. ')
 
     start_d = np.floor(np.nanmin(cast_copy['depth'].values))
     # Round the the nearest half to get even intervals
@@ -726,15 +719,15 @@ def process_rsk():
     downcast, upcast = low_pass_filter(downcast, upcast)
     plot_channels(downcast, '4_post_filter_downcast', figure_dir) ## can get rid of this after
 
-    ##downcast = descent_rate_filter(downcast, 'down')
-    ##upcast = descent_rate_filter(upcast, 'up')
+    downcast = descent_rate_filter(downcast, 'down')
+    upcast = descent_rate_filter(upcast, 'up')
     downcast.to_csv(os.path.join(dest_dir, 'downcast_processed_unbinned.csv'), index=False)
     upcast.to_csv(os.path.join(dest_dir, 'upcast_processed_unbinned.csv'), index=False)
     plot_channels(downcast, '5_post_delete_downcast', figure_dir)
 
-    downcast_fluo_binned, downcast_par_binned = bin_casts(downcast, upcast)
+    downcast_binned = bin_casts(downcast, upcast)
 
-    pre_vs_post_processing_plots(raw_rsk_df, downcast_fluo_binned, figure_dir, 'chlorophyll_a')
-    pre_vs_post_processing_plots(raw_rsk_df, downcast_par_binned, figure_dir, 'par')
+    pre_vs_post_processing_plots(raw_rsk_df, downcast_binned, figure_dir, 'chlorophyll_a')
+    pre_vs_post_processing_plots(raw_rsk_df, downcast_binned, figure_dir, 'par')
 
 process_rsk()
