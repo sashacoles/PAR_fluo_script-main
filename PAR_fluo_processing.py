@@ -152,7 +152,7 @@ def get_downcast_and_upcast(rsk):
 
 def plot_channels(rsk_df, stage, figure_dir):
     """
-    plot chlorophyll a and PAR against pressure at different stages of the pipeline
+    plot chlorophyll a and PAR against depth at different stages of the pipeline
     will create two .png files, one for par one for chla
     all figure file names will be numbered, in order of step in the pipeline (trim = 1, despike/holds = 2, ...)
     Args:
@@ -172,14 +172,14 @@ def plot_channels(rsk_df, stage, figure_dir):
 
     for channel in CHANNELS:
         figure, ax = plt.subplots()
-        ax.plot(rsk_df[channel], rsk_df["pressure"])
+        ax.plot(rsk_df[channel], rsk_df["depth"])
         ax.invert_yaxis()
         ax.xaxis.set_label_position("top")
         ax.xaxis.set_ticks_position("top")
         ax.tick_params(bottom=True, top=True, left=True, right=True, labelbottom=True, labeltop=True, labelleft=True, labelright=True)
-        plt.ylabel("Pressure (decibar)")
+        plt.ylabel("Depth (m)")
         plt.xlabel(channel.capitalize() + " (" + CHANNEL_UNTIS[channel] + ")")
-        plt.title(title.title() + channel.replace("_", " ").capitalize() + " vs. Pressure")
+        plt.title(title.title() + channel.replace("_", " ").capitalize() + " vs. Depth")
         plt.tight_layout()
         plt.savefig(figure_dir + "\\"+ figure_name + channel)
 
@@ -500,7 +500,7 @@ def descent_rate_filter(cast, direction):
         cast['pressure'].between(10, press_max), 'in_range', 'out_range'
     )
     subsetter = np.where(
-        (cast['p_range'] == 'in_range') & (cast['velocity'] < 0.3)
+        (cast['p_range'] == 'in_range') & (cast['velocity'] < 0.1)
     )
     ref = press[0]
 
@@ -709,9 +709,9 @@ def process_rsk():
     rsk_to_csv(rsk, rsk_file_name.replace(".rsk", "_raw_data.csv"))
     figure_dir = os.path.join(dest_dir, "figures")
     os.makedirs(figure_dir, exist_ok=True)
+    rsk = derive_values(rsk)
     plot_channels(pd.DataFrame(rsk.data), "1_pre", figure_dir)
 
-    rsk = derive_values(rsk)
     rsk = trim_profile(rsk)
     plot_pressure_diff(pd.DataFrame(rsk.data), "pre", figure_dir)
     plot_channels(pd.DataFrame(rsk.data), "2_post_trim", figure_dir)
@@ -726,8 +726,8 @@ def process_rsk():
     downcast, upcast = low_pass_filter(downcast, upcast)
     plot_channels(downcast, '4_post_filter_downcast', figure_dir) ## can get rid of this after
 
-    downcast = descent_rate_filter(downcast, 'down')
-    upcast = descent_rate_filter(upcast, 'up')
+    ##downcast = descent_rate_filter(downcast, 'down')
+    ##upcast = descent_rate_filter(upcast, 'up')
     downcast.to_csv(os.path.join(dest_dir, 'downcast_processed_unbinned.csv'), index=False)
     upcast.to_csv(os.path.join(dest_dir, 'upcast_processed_unbinned.csv'), index=False)
     plot_channels(downcast, '5_post_delete_downcast', figure_dir)
