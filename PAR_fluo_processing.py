@@ -29,8 +29,8 @@ original_raw_downcast_data = []
 sampling_period = np.nan
 
 # USER-DEFINED VARIABLES -- FILL THESE IN BEFORE RUNNING
-dest_dir = "C:\\Users\\COLESS\\Documents\\Python_CTDscript\\PAR_fluo_script-main\\station3"
-rsk_file_name = "Eureka2024_PAR_Fluo_St3.rsk"
+dest_dir = "C:\\Users\\COLESS\\Documents\\Python_CTDscript\\PAR_fluo_script-main\\station1"
+rsk_file_name = "Eureka2024_PAR_Fluo_St1.rsk"
 fill_action = 'interp' ## how we want to correct for zero order holds and despike--can either be 'interp' or na
 ## despiking variables:
 spk_std = 3
@@ -46,6 +46,8 @@ bin_interval = 1
 ## detection thresholds for channels, values below these will be set to NaN
 fluo_detection_threshold = 0.02
 par_detection_threshold = 0
+##plotting variables
+plotting_depth_limit = 15 #in meters
 #--------------------------------------------
 
 def read_rsk():
@@ -55,7 +57,7 @@ def read_rsk():
     Returns:
         a new rsk object
     """
-    print("Reading RSK file...")
+    print("Reading RSK file")
     file_name = str(dest_dir + "\\" + rsk_file_name)
     rsk = pyrsktools.RSK(file_name, readHiddenChannels=False)
     rsk.open()
@@ -74,7 +76,7 @@ def create_metadata_file(rsk):
     """
     creates the file metadata.xlsx in dest_dir containing metadata of the read in .rsk file
     """
-    print("Creating metadata file...")
+    print("Creating metadata file: metadata.xlsx")
     metadata_dict = {}
     metadata_file_name = dest_dir + "\\metadata.xlsx"
 
@@ -117,6 +119,23 @@ def get_sampling_period(rsk):
         sys.exit("Sampling period not detected correctly in metadata. Fill out sampling period manually on line 25.")
     else:
         sampling_period = interval
+
+def apply_detection_thresholds(rsk):
+    print(f"replacing fluo values below {fluo_detection_threshold} with NaN")
+    print(f"replacing PAR values below {par_detection_threshold} with NaN")
+
+    fluo_mask = rsk.data["chlorophyll_a"] < fluo_detection_threshold
+    par_mask = rsk.data["par"] < par_detection_threshold
+
+    nan_fluo_count = np.sum(fluo_mask)
+    nan_par_count = np.sum(par_mask)
+    print(f"A total of {nan_fluo_count} values were below the fluo detection threshold, and were replaced with NaN.")
+    print(f"A total of {nan_par_count} values were below the PAR detection threshold, and were replaced with NaN.")
+
+    rsk.data["chlorophyll_a"][fluo_mask] = np.nan
+    rsk.data["par"][par_mask] = np.nan
+
+    return rsk
 
 def derive_values(rsk):
     """
@@ -502,7 +521,7 @@ def descent_rate_filter(cast, direction):
         cast['pressure'].between(10, press_max), 'in_range', 'out_range'
     )
     subsetter = np.where(
-        (cast['p_range'] == 'in_range') & (np.abs(cast['velocity']) < 0.1)
+        (cast['p_range'] == 'in_range') & (np.abs(cast['velocity']) < 0.3)
     )
     ref = press[0]
 
@@ -640,7 +659,7 @@ def format_processing_plot(
     plt.tight_layout()
     return
 
-def pre_vs_post_processing_plots(original, processed, figure_dir, channel):
+def pre_vs_post_processing_plots(original, processed, figure_dir, channel, limit_depth):
     """
     creates figures that plot the raw data and the processed data together
     Args:
@@ -649,10 +668,18 @@ def pre_vs_post_processing_plots(original, processed, figure_dir, channel):
         figure_dir: directory where figures will be saved
         channel: which channel to plot
     """
+
+    if limit_depth:
+        plot_title = f"Raw vs Processed {channel} down to {plotting_depth_limit}m"
+        figure_name = f"Despiked_VS_Post_Processing_{channel}_to_{plotting_depth_limit}.png"
+    else:
+        plot_title = f"Raw vs Processed {channel} (binned)"
+        figure_name = f"Despiked_VS_Post_Processing_{channel}_binned.png"
+
     fig, ax = plt.subplots()
     ax.plot(
         processed[channel],
-        processed['pressure'],
+        processed['depth'],
         color="red",
         linewidth=1.1,
         label="Processed",
@@ -660,7 +687,7 @@ def pre_vs_post_processing_plots(original, processed, figure_dir, channel):
     )
     ax.plot(
         original[channel],
-        original['pressure'],
+        original['depth'],
         color="blue",
         linewidth=1.1,
         alpha=0.5,
@@ -671,16 +698,15 @@ def pre_vs_post_processing_plots(original, processed, figure_dir, channel):
         ax,
         x_var_name=channel,
         x_var_units=CHANNEL_UNTIS[channel],
-        y_var_name="Pressure",
-        y_var_units="dbar",
-        plot_title=f"Raw vs Processed {channel}",
+        y_var_name="Depth",
+        y_var_units="m",
+        plot_title=plot_title,
         invert_yaxis=True,
     )
 
     ax.legend()
 
-    plt.savefig(os.path.join(figure_dir, f"Despiked_VS_Post_Processing_{channel}_binned.png"), dpi=300,
-                bbox_inches="tight", )
+    plt.savefig(os.path.join(figure_dir, figure_name), dpi=300, bbox_inches="tight", )
 
 def process_rsk():
     """
@@ -695,6 +721,7 @@ def process_rsk():
         - bin data
         - plots
     """
+    print("\n ---------------------------\nStarting script...")
     rsk = read_rsk()
 
     get_sampling_period(rsk)
@@ -712,6 +739,7 @@ def process_rsk():
     rsk = correct_spikes_and_zoh(rsk)
     plot_channels(pd.DataFrame(rsk.data), "3_post_despiking", figure_dir)
     plot_pressure_diff(pd.DataFrame(rsk.data), "post", figure_dir)
+    #rsk = apply_detection_thresholds(rsk)
     raw_rsk_df = pd.DataFrame(rsk.data) ## save the rsk object in its current state so we can use it to plot before/after processing
 
     downcast, upcast = separate_casts(rsk) ## can also return the whole profile as df from this function if needed :p
@@ -727,7 +755,10 @@ def process_rsk():
 
     downcast_binned = bin_casts(downcast, upcast)
 
-    pre_vs_post_processing_plots(raw_rsk_df, downcast_binned, figure_dir, 'chlorophyll_a')
-    pre_vs_post_processing_plots(raw_rsk_df, downcast_binned, figure_dir, 'par')
+    pre_vs_post_processing_plots(raw_rsk_df, downcast_binned, figure_dir, 'chlorophyll_a', False)
+    pre_vs_post_processing_plots(raw_rsk_df[raw_rsk_df["depth"] <= plotting_depth_limit], downcast[downcast["depth"] <= plotting_depth_limit], figure_dir, 'chlorophyll_a', True)
+
+    pre_vs_post_processing_plots(raw_rsk_df, downcast_binned, figure_dir, 'par', False)
+    pre_vs_post_processing_plots(raw_rsk_df[raw_rsk_df["depth"] <= plotting_depth_limit], downcast[downcast["depth"] <= plotting_depth_limit], figure_dir, 'par', True)
 
 process_rsk()
