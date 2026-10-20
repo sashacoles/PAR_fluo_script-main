@@ -141,7 +141,7 @@ def derive_values(rsk):
     """
     derives sea pressure, depth, and velocity
     """
-    print("Deriving sea pressure, depth, and velocity...")
+    print("Deriving sea pressure, depth, and velocity")
     rsk.deriveseapressure()
     rsk.derivedepth()
     rsk.derivevelocity()
@@ -214,14 +214,13 @@ def plot_pressure_diff(rsk_df, stage, figure_dir):
         stage: a string (either 'pre' or 'post' indicating the stage of the pipeline we're at, will determine plot title+file name
         figure_dir: directory to save figures to
     """
-    print("Plotting pressure differences before hold corrections...")
-
     if stage == "pre":
         figure_name = "pressure_differences.png"
         title = "Pressure Difference Between Consecutive Scans"
     elif stage == "post":
         figure_name = "pressure_differences_with_corrections.png"
         title = "Pressure Difference Between Consecutive Scans (with ZOH corrections made)"
+    print(f"\nPlotting pressure differences {title}")
 
     pressure_diff = rsk_df["pressure"].diff()
 
@@ -263,7 +262,7 @@ def remove_soak(rsk):
     Returns:
         rsk object with soak period removed
     """
-    print("- Removing soak from beginning of downcast")
+    print("Removing soak from beginning of downcast")
     window = 100
     run = 100  ## instrument must be actively dropping/rising for at least 100 samples in a row
 
@@ -355,7 +354,7 @@ def check_for_zoh(rsk):
     minute.'
     Only checks for holds in the pressure channel
     """
-    print("Checking for zoh...")
+    print("Checking for zoh")
     rsk_df = pd.DataFrame(rsk.data)
     pressure = pd.to_numeric(rsk_df["pressure"], errors="coerce").dropna()
     pressure_diffs = np.diff(pressure)
@@ -435,7 +434,7 @@ def correct_spikes_and_zoh(rsk):
     Returns:
         rsk: rsk object with spikes and holds corrected
     """
-    print("Correcting spikes and zoh...")
+    print("Correcting spikes and zoh")
     check_for_zoh(rsk)
 
     if prompt_user_for_zoh():
@@ -450,10 +449,15 @@ def rsk_to_csv(rsk, file_name):
     """
     saves a rsk object to a csv file, with a given file name
     """
+    original_stdout = sys.stdout ##pyrsktools._rsk.export prints the wrong file name, redirect stdout
+    sys.stdout = open(os.devnull, "w")
+
     RSK2CSV(rsk, outputDir=dest_dir)
     default_csv = os.path.join(dest_dir, rsk_file_name.replace(".rsk", ".csv"))  # same base name as your .rsk file
     new_csv = os.path.join(dest_dir,file_name)
     shutil.move(default_csv, new_csv)
+    sys.stdout = original_stdout
+
 
 def separate_casts(rsk):
     """
@@ -477,7 +481,8 @@ def low_pass_filter(downcast, upcast):
         downcast: filtered downcast dataframe
         upcast: filtered upcast dataframe
     """
-    print('applying low pass filter...')
+    print(f"applying low pass filter\n"
+          f' - filter type: {filter_type}\n - filter window width: {filter_window_width}')
     sample_rate = int(np.round(1 / float(sampling_period)))
 
     if filter_type.lower() == 'fir':
@@ -562,6 +567,8 @@ def bin_casts(downcast, upcast):
     Returns:
         downcast_binned: downcast data that has been binned at the interval specified by bin_interval
     """
+    print(f"binning data by depth ({bin_interval}m intervals)")
+
     downcast_binned = bin_average(downcast)
     downcast_binned.to_csv(os.path.join(dest_dir, 'downcast_processed_binned.csv'), index=False)
 
@@ -672,9 +679,11 @@ def pre_vs_post_processing_plots(original, processed, figure_dir, channel, limit
     if limit_depth:
         plot_title = f"Raw vs Processed {channel} down to {plotting_depth_limit}m"
         figure_name = f"Despiked_VS_Post_Processing_{channel}_to_{plotting_depth_limit}.png"
+        print(f"generating plots to show pre vs post processing {channel} down to {plotting_depth_limit}m")
     else:
         plot_title = f"Raw vs Processed {channel} (binned)"
         figure_name = f"Despiked_VS_Post_Processing_{channel}_binned.png"
+        print(f"generating plots to show pre vs post processing {channel}")
 
     fig, ax = plt.subplots()
     ax.plot(
@@ -721,7 +730,7 @@ def process_rsk():
         - bin data
         - plots
     """
-    print("\n ---------------------------\nStarting script...")
+    print("\n---------------------------\nStarting script...\n---------------------------\n")
     rsk = read_rsk()
 
     get_sampling_period(rsk)
@@ -761,4 +770,5 @@ def process_rsk():
     pre_vs_post_processing_plots(raw_rsk_df, downcast_binned, figure_dir, 'par', False)
     pre_vs_post_processing_plots(raw_rsk_df[raw_rsk_df["depth"] <= plotting_depth_limit], downcast[downcast["depth"] <= plotting_depth_limit], figure_dir, 'par', True)
 
+    print("\nprocessing complete!")
 process_rsk()
