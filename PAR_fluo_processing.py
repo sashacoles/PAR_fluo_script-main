@@ -267,15 +267,17 @@ def prompt_for_custom_trim():
                 )
 
         elif trim_input == 'no':
-            print("clip_cast and remove_soak functions will be used to estimate where trim should occur.")
+            print("\nclip_cast and remove_soak functions will be used to estimate where trim should occur.\n")
             valid_input = True
             custom_trim = False
         else:
             print('\nINVALID INPUT. You must enter either yes or no.\n')
 
 def trim_to_custom_depth(rsk):
-    """Remove records at the beginning of each cast until depth
-        reaches the specified value."""
+    """
+    Remove records at the beginning of each cast until depth
+    reaches the specified value.
+    """
     depth = rsk.data["depth"]
     reached_depth = depth >= custom_trim_depth
     if reached_depth.any():
@@ -805,15 +807,8 @@ def process_rsk():
 
     prompt_for_custom_trim()
     rsk = trim_profile(rsk)
-    rsk = trim_to_custom_depth(rsk)
-
-    df = pd.DataFrame(rsk.data)
-
-    print("Stage: 2_post_trim")
-    print("Minimum depth:", df["depth"].min())
-    print("Maximum depth:", df["depth"].max())
-    print("First 10 depths:", df["depth"].head(10).tolist())
-    print("Number of rows:", len(df))
+    if custom_trim:
+        rsk = trim_to_custom_depth(rsk)
     plot_pressure_diff(pd.DataFrame(rsk.data), "pre", figure_dir)
     plot_channels(pd.DataFrame(rsk.data), "2_post_trim", figure_dir)
 
