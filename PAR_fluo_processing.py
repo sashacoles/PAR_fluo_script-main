@@ -48,7 +48,10 @@ fluo_detection_threshold = 0.02
 par_detection_threshold = 0
 ##plotting variables
 plotting_depth_limit = 15 #in meters
-#--------------------------------------------
+## custom trim variables
+custom_trim_depth = None
+custom_trim  = None
+#END OF USER-DEFINED VARIABLES
 
 def read_rsk():
     """
@@ -234,6 +237,65 @@ def plot_pressure_diff(rsk_df, stage, figure_dir):
     plt.title(title)
     plt.tight_layout()
     plt.savefig(os.path.join(figure_dir + "\\" + figure_name))
+
+def prompt_for_custom_trim():
+    global custom_trim, custom_trim_depth
+    valid_input = False
+    ## ask user if data should be despiked, repeat question until valid input (true or false) is entered
+    while not valid_input:
+        trim_input = input(f'Would you like to define your own depth to trim the data to (yes/no)?\n(any records at the beginning of the cast with a depth value lower than this will be removed. \nIf you answer no, the pre-existing clip_cast function will be used to estimate where the trim should happen, \nbut it can trim inaccurately when data is irregular)').lower()
+        if trim_input == 'yes':
+            custom_trim_depth_entered = input("Enter the depth value in meters that the beginning of the cast should be trimmed to. Enter decimal or whole numbers only.").strip()
+            try:
+                custom_trim_depth = float(custom_trim_depth_entered)
+
+                # reject NaN, infinity, negative values
+                import math
+                if not math.isfinite(custom_trim_depth):
+                    raise ValueError
+                if custom_trim_depth < 0:
+                    raise ValueError
+
+                custom_trim = True
+                valid_input = True
+                break
+
+            except ValueError:
+                print(
+                    "\nINVALID DEPTH INPUT. Enter a valid finite number, "
+                    "such as 10 or 10.5. Please try again.\n"
+                )
+
+        elif trim_input == 'no':
+            print("clip_cast and remove_soak functions will be used to estimate where trim should occur.")
+            valid_input = True
+            custom_trim = False
+        else:
+            print('\nINVALID INPUT. You must enter either yes or no.\n')
+
+def trim_to_custom_depth(rsk):
+    """Remove records at the beginning of each cast until depth
+        reaches the specified value."""
+    depth = rsk.data["depth"]
+    reached_depth = depth >= custom_trim_depth
+    if reached_depth.any():
+        first_index = np.where(reached_depth)[0][0]
+        print("First index:", first_index)
+        print("Depth at trim:", depth[first_index])
+        print("Records before trim:", len(rsk.data))
+
+        rsk.data = rsk.data[first_index:].copy()
+
+        print("Records after trim:", len(rsk.data))
+        print("First retained depth:", rsk.data["depth"][0])
+
+    else:
+        print(
+            f"Warning: Cast never reaches"
+            f"{custom_trim_depth} m. No custom trimming performed."
+        )
+    return rsk
+
 
 def trim_profile(rsk):
     """
@@ -741,7 +803,17 @@ def process_rsk():
     rsk = derive_values(rsk)
     plot_channels(pd.DataFrame(rsk.data), "1_pre", figure_dir)
 
+    prompt_for_custom_trim()
     rsk = trim_profile(rsk)
+    rsk = trim_to_custom_depth(rsk)
+
+    df = pd.DataFrame(rsk.data)
+
+    print("Stage: 2_post_trim")
+    print("Minimum depth:", df["depth"].min())
+    print("Maximum depth:", df["depth"].max())
+    print("First 10 depths:", df["depth"].head(10).tolist())
+    print("Number of rows:", len(df))
     plot_pressure_diff(pd.DataFrame(rsk.data), "pre", figure_dir)
     plot_channels(pd.DataFrame(rsk.data), "2_post_trim", figure_dir)
 
