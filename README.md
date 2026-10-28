@@ -1,4 +1,4 @@
-## PAR_fluo_script-main
+# PAR_fluo_script-main
 A python script for processing raw RBR Concerto/Brevio Fluo-PAR duo sensor data.
 
 Based on code in the following repos:
@@ -9,10 +9,10 @@ https://github.com/IOS-OSD-DPG/RBR-CTD-Processing
 
 processes a single .rsk file containing a single profile.
 
-### Dependencies & Versions
+## Dependencies & Versions
 Python version: 3.13
 
-### Data Processing Steps
+## Data Processing Steps
 - derive sea pressure, depth, and velocity
 - remove soak period and trim cast
 - correct zero order holds
@@ -22,13 +22,13 @@ Python version: 3.13
 - descent rate filter/delete pressure reversals
 - bin data by depth
 
-### Running Instructions
+## Running Instructions
 *if running in terminal:*
 ```py PAR_fluo_processing.py```or ```python3 PAR_fluo_processing.py```
 
 Recommended: Run the program in PyCharm IDE (available on the DFO network)
 
-#### User-defined Variables
+### User-defined Variables
 Before running the program, you must read through and change the user-defined variables in the code based on your data and processing requirements.
 
 Navigate to line 31, where you will see the following comment:
@@ -75,7 +75,7 @@ for your data/files.
 
 While running, view the output in the terminal to see what's currently happening. 
 
-#### User Input
+### User Input
 At certain points you will be prompted to answer questions. The program will halt 
 until you enter a valid answer.
 
@@ -92,7 +92,7 @@ You will be prompted for the following information:
 - if you would like to despike chlorophyll a (enter either true or false)
 
 
-# Output
+## Output
 - **[rsk file name]_raw_data.csv**: contains the raw data from your provided .rsk file in csv format
 - **metadata.xlsx**: contains metadata derived from your provided .rsk file
 - **downcast_processed_binned.csv**: contains fully processed downcast data, binned to your specific interval
@@ -100,7 +100,7 @@ You will be prompted for the following information:
 - **downcast_processed_unbinned.csv**: contains fully processed downcast data that has not been binned
 - **upcast_processed_unbinned.csv**: contains fully processed upcast data that has not been binned
 
-# References: 
+## References: 
 
 Halverson, M., Jackson, J., Richards, C., Melling, H., Brunsting, R., Dempsey, M., Ga- tien, G., Hamilton, A., Hunt, B., Jacob, W., and Zimmerman, S. 2017. Guidelines for processing RBR CTD profiles. Can. Tech. Rep. Hydrogr. Ocean Sci. 314: iv + 38 p.
 
