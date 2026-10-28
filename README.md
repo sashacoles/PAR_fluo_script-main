@@ -100,4 +100,10 @@ You will be prompted for the following information:
 - **downcast_processed_unbinned.csv**: contains fully processed downcast data that has not been binned
 - **upcast_processed_unbinned.csv**: contains fully processed upcast data that has not been binned
 
-References: Halverson, M., Jackson, J., Richards, C., Melling, H., Brunsting, R., Dempsey, M., Ga- tien, G., Hamilton, A., Hunt, B., Jacob, W., and Zimmerman, S. 2017. Guidelines for processing RBR CTD profiles. Can. Tech. Rep. Hydrogr. Ocean Sci. 314: iv + 38 p.
+# References: 
+
+Halverson, M., Jackson, J., Richards, C., Melling, H., Brunsting, R., Dempsey, M., Ga- tien, G., Hamilton, A., Hunt, B., Jacob, W., and Zimmerman, S. 2017. Guidelines for processing RBR CTD profiles. Can. Tech. Rep. Hydrogr. Ocean Sci. 314: iv + 38 p.
+
+https://github.com/guanlu129/RBR_CTD_Processing
+
+https://github.com/IOS-OSD-DPG/RBR-CTD-Processing
